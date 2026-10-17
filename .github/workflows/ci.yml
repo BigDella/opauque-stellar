@@ -457,6 +457,10 @@ jobs:
         if: needs.changes.outputs.sdk == 'true'
         run: npm run typecheck --prefix sdk
 
+      - name: Typecheck docs examples
+        if: needs.changes.outputs.sdk == 'true'
+        run: npm run typecheck:docs --prefix sdk
+
       - name: Build
         if: needs.changes.outputs.sdk == 'true'
         run: npm run build --prefix sdk
