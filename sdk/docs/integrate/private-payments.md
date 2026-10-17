@@ -95,58 +95,42 @@ without touching the network.
 
 ## Step 4 — Recipient scans for incoming transfers
 
-Scanning is two parts: **fetch announcements** from the stealth-announcer
-contract, then **match** them against the recipient's keys (pure crypto, no
-network).
+`scanIterator` reads announcements from the stealth-announcer contract and
+**matches** them against the recipient's keys (pure crypto, no network),
+yielding each transfer addressed to this identity as soon as its page is read:
 
-```ts
-// (a) Fetch announcements from chain. Read the stealth-announcer contract's
-// events via the low-level client and map each to a StealthAnnouncement:
-//   { stealthAddress: string, ephemeralPubKey: Uint8Array, viewTag: number }
-const announcements = await fetchAnnouncements(opaque); // see note below
+<<< @/snippets/private-payments.ts#scan
 
-// (b) Match — view-tag prefilter, reconstruct, confirm by stealth id:
-const matches = opaque.payments.scan({ announcements, identity });
+Only transfers addressed to this identity are yielded. A coincidental view-tag
+collision is rejected (it confirms by recomputing the stealth id), so matches
+are exact. `break` out of the loop to stop without reading further pages.
 
-for (const m of matches) {
-  console.log("incoming transfer at", m.stealthStellarAddress);
-  // m.stealthPrivKey — the one-time key controlling those funds
-}
-```
-
-`scan` returns only the transfers addressed to this identity. A coincidental
-view-tag collision is rejected (it confirms by recomputing the stealth id), so
-matches are exact.
-
-::: details Fetching announcements from the announcer contract
-`scan` takes announcements you supply, so you control the source and pagination.
-Read the stealth-announcer events with the built-in client and map them:
-
-```ts
-async function fetchAnnouncements(opaque) {
-  const announcer = opaque.config.contracts.stealthAnnouncer;
-  const res = await opaque.rpc.getEvents({
-    startLedger: opaque.config.startLedger,
-    filters: [{ type: "contract", contractIds: [announcer] }],
-    limit: 100,
-  });
-  // Map each announce event's (stealthId, ephemeralPubKey, metadata) into:
-  // { stealthAddress, ephemeralPubKey, viewTag: metadata[0] }
-  // Follow res.cursor to page older history (see pool reconstruction for the pattern).
-  return res.events.map(decodeAnnounceEvent);
-}
-```
-
-Persist a scan cursor (via a `ScanStore`) so you only process new ledgers.
-`scanIterator` does this for you, and the cursor is **keyed per identity** — one
-client can watch many identities without one identity's scan resuming past
-another's payments. A range with no announcements still counts as scanned, so
-quiet ledgers are not re-read on every run.
+The scan follows the RPC's event cursor to the end of the range. Soroban RPC can
+return empty pages before the ones holding events, so an empty page does not
+end the scan. The cursor is persisted to the client's `ScanStore` after every
+page and is **keyed per identity**, so one client can watch many identities
+without one identity's scan resuming past another's payments. A range with no
+announcements still counts as scanned, so quiet ledgers are not re-read on
+every run.
 
 Scans are event-paged and bounded: a scan that hits the page cap raises
 `EventTruncationError` (transfers may be missing) with `lastScannedLedger` and
-`continuationCursor` to resume from, rather than reporting a partial result as a
-complete one. Pass `allowTruncation: true` only if a gap is acceptable to you.
+`continuationCursor`, rather than reporting a partial result as a complete one.
+The persisted cursor stays at the last fully-read page, so calling
+`scanIterator` again resumes there. Pass `allowTruncation: true` only if a gap
+is acceptable to you.
+
+::: details Supplying your own announcements
+`payments.scan({ announcements, identity })` matches an announcement list you
+supply. To read the list from chain yourself, page through the announcer's
+events with `contracts.stealthAnnouncer.scanEvents()`. It yields one page per
+`getEvents` response, empty ones included, and stops only when the range
+drains:
+
+<<< @/snippets/private-payments.ts#fetch
+
+This path does not read or write the `ScanStore` cursor; track the resume
+point yourself: on the page with `complete: true`, resume at `endLedger + 1`.
 :::
 
 ## Step 5 — Recipient sweeps the funds
@@ -171,28 +155,7 @@ and fee. Querying the stealth account's spendable balance:
 
 ## Full end-to-end script
 
-```ts
-import { OpaqueClient, keypairSigner, parseXlmToStroops } from "@opaquecash/stellar";
-
-// --- recipient ---
-const recipient = new OpaqueClient({ network: "testnet", signer: keypairSigner(RECIPIENT_SECRET) });
-const id = recipient.payments.deriveIdentity(recipientSignatureHex);
-await recipient.payments.register({ metaAddress: id.metaAddress });
-
-// --- sender ---
-const sender = new OpaqueClient({ network: "testnet", signer: keypairSigner(SENDER_SECRET) });
-const sent = await sender.payments.send({ to: id.metaHex, amountXlm: "10" });
-console.log("paid stealth account:", sent.stealthStellarAddress);
-
-// --- recipient detects + sweeps ---
-const announcements = await fetchAnnouncements(recipient);
-const [match] = recipient.payments.scan({ announcements, identity: id });
-await recipient.payments.sweep({
-  stealthPrivKey: match.stealthPrivKey,
-  destination: RECIPIENT_MAIN_ACCOUNT,
-  amountStroops: parseXlmToStroops("9.9"),
-});
-```
+<<< @/snippets/private-payments-e2e.ts#full
 
 ## Errors to handle
 

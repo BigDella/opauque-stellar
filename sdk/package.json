@@ -86,6 +86,7 @@
     "check:size": "node scripts/check-bundle-size.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
+    "typecheck:docs": "node scripts/check-doc-snippets.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run tests/e2e",

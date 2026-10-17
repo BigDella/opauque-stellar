@@ -46,38 +46,29 @@ await opaque.payments.register({ metaAddress: identity.metaAddress });
 
 ## Step 2 — Detect incoming deposits in bulk (batch receiving)
 
-`scan()` takes a whole batch of announcements and returns every match against
-one identity in a single pass — fetch a page of announcements, then scan the
-whole page at once rather than checking one at a time:
+`payments.scanIterator()` reads the stealth-announcer's events from chain page
+by page, matches each whole page against your identity in one pass, and yields
+every deposit as soon as its page is read:
 
-```ts
-async function fetchAnnouncements(opaque, cursor?: string) {
-  const announcer = opaque.config.contracts.stealthAnnouncer;
-  const res = await opaque.rpc.getEvents({
-    startLedger: cursor ? undefined : opaque.config.startLedger,
-    cursor,
-    filters: [{ type: "contract", contractIds: [announcer] }],
-    limit: 100, // page size; follow res.cursor for more
-  });
-  return { announcements: res.events.map(decodeAnnounceEvent), cursor: res.cursor };
-}
+<<< @/snippets/custodial-platforms.ts#scan
 
-let cursor: string | undefined;
-const allMatches = [];
-for (;;) {
-  const { announcements, cursor: next } = await fetchAnnouncements(opaque, cursor);
-  if (announcements.length === 0) break;
-  allMatches.push(...opaque.payments.scan({ announcements, identity }));
-  cursor = next;
-}
-```
+Soroban RPC can hand back empty event pages before the ones holding events, so
+an empty page is never the end of the scan: the iterator keeps following the
+RPC cursor until the event range drains, and only then does the `for await`
+finish. A pass that hits the page cap throws `EventTruncationError` rather
+than ending as if it were complete; the loop above resumes it from the cursor
+saved at the last fully-read page.
 
-Persist the scan cursor (a `ScanStore`) between runs so a periodic job only
-processes new ledgers, not the full history every time.
+The iterator persists its cursor to the client's `ScanStore` after every page,
+quiet ones included, so a periodic job only processes new ledgers, not the full
+history every time. The default store is in-memory; pass a persistent one
+(`new OpaqueClient({ ..., storage: { scan: myScanStore } })`) for a job that
+restarts. A crash mid-page re-yields that page's matches on the next run, so
+make `onDeposit` idempotent (key credits by `match.stealthStellarAddress`).
 
 There is currently no on-chain batch primitive (no batch nullifier-check or
-batch-balance contract call) — `scan()` batches the client-side matching step,
-not a chain round-trip. Plan your polling interval and page size around
+batch-balance contract call) — the scan batches the client-side matching step,
+not a chain round-trip. Plan your polling interval and `maxPages` cap around
 Soroban RPC's own event-query limits, not around an Opaque-specific batch API.
 
 ## Step 3 — Pay users out privately

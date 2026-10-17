@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@opaquecash/stellar": ["./src/index.ts"]
+    }
+  },
+  "include": ["docs/snippets"]
+}
