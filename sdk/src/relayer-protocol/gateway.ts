@@ -264,10 +264,12 @@ export class RelayerGateway {
     opts?: GatewayRequestOptions,
   ): Promise<T> {
     const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
-    // Retry per attempt budget, not per URL count — with a single gateway
-    // URL the old `Math.min(retries, urls.length)` formula yielded maxAttempts=1,
-    // making the documented linear-backoff retry never happen (issue #1008).
-    const maxAttempts = this.retries;
+    // maxAttempts = retries + 1: retries:0 means exactly one attempt, retries:2
+    // means one initial attempt plus two retries (three total). With a single
+    // gateway URL the old `Math.min(retries, urls.length)` formula yielded
+    // maxAttempts=1, making the documented linear-backoff retry never happen
+    // (issue #1008); the +1 form keeps the attempt budget independent of URL count.
+    const maxAttempts = this.retries + 1;
     const callerSignal = opts?.signal;
 
     if (callerSignal?.aborted) {
@@ -370,13 +372,20 @@ export class RelayerGateway {
       encodePoolWithdrawPayload(args.draft.payload),
       hexToBytes(args.bid.x25519Pk),
     );
+    // Stable idempotency key: jobId + relayer x25519 pubkey uniquely identify
+    // one delivery attempt. The same key is sent on every retry so the relayer
+    // can de-duplicate re-POSTs that arrive after a gateway timeout.
+    const idempotencyKey = `${args.draft.jobIdHex}:${args.bid.x25519Pk}`;
     const body = await this.gatewayFetch<{
       result?: { acceptedTx?: string; submittedTx?: string } | null;
     }>(
       `v1/jobs/${encodeURIComponent(args.draft.jobIdHex)}/payload`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-idempotency-key": idempotencyKey,
+        },
         body: JSON.stringify({ t: "payload", v: 1, jobId: args.draft.jobIdHex, to: args.bid.x25519Pk, box }),
       },
       { gateway: args.gateway, signal: args.signal, timeoutMs: args.timeoutMs },
