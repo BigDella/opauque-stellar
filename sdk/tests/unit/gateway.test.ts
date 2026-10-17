@@ -472,6 +472,39 @@ describe("RelayerGateway", () => {
   // --- deliverPayload ------------------------------------------------------
 
   describe("deliverPayload", () => {
+    const DRAFT = {
+      jobId: new Uint8Array(32),
+      jobIdHex: "00".repeat(32),
+      payload: {
+        poolId: "CPOOL",
+        proofA: new Uint8Array(64),
+        proofB: new Uint8Array(128),
+        proofC: new Uint8Array(64),
+        withdrawnValue: 1000n,
+        stateRoot: new Uint8Array(32),
+        aspRoot: new Uint8Array(32),
+        nullifierHash: new Uint8Array(32),
+        newCommitment: new Uint8Array(32),
+        recipient: "GADDR",
+        poolFee: 0n,
+        poolRelayer: "CREG",
+      } as any,
+      payloadHash: new Uint8Array(32),
+      payloadHashHex: "aa".repeat(32),
+      advert: {} as any,
+      deadlineLedger: 100,
+      fee: 100n,
+    };
+    const BID = {
+      t: "bid" as const,
+      v: 1 as const,
+      jobId: "00".repeat(32),
+      chain: 3000,
+      operator: "GTEST",
+      x25519Pk: "bb".repeat(32),
+      sig: "sig",
+    };
+
     it("returns result from gateway", async () => {
       globalThis.fetch = vi.fn(() =>
         Promise.resolve(jsonResponse({
@@ -480,36 +513,72 @@ describe("RelayerGateway", () => {
       ) as any;
 
       const g = gw(["http://gw-a"]);
-      const result = await g.deliverPayload({
-        draft: {
-          jobId: new Uint8Array(32),
-          jobIdHex: "0x" + "00".repeat(32),
-          payload: {
-            poolId: "CPOOL",
-            proofA: new Uint8Array(32),
-            proofB: new Uint8Array(64),
-            proofC: new Uint8Array(32),
-            withdrawnValue: 1000n,
-            stateRoot: new Uint8Array(32),
-            aspRoot: new Uint8Array(32),
-            nullifierHash: new Uint8Array(32),
-            newCommitment: new Uint8Array(32),
-            recipient: "GADDR",
-            poolFee: 0n,
-            poolRelayer: "CREG",
-          } as any,
-          payloadHash: new Uint8Array(32),
-          payloadHashHex: "0x" + "aa".repeat(32),
-          advert: {} as any,
-          deadlineLedger: 100,
-          fee: 100n,
-        },
-        bid: {
-          t: "bid", v: 1, jobId: "0x" + "00".repeat(32), chain: 3000,
-          operator: "GTEST", x25519Pk: "0x" + "bb".repeat(32), sig: "sig",
-        },
-      });
+      const result = await g.deliverPayload({ draft: DRAFT, bid: BID });
       expect(result).toEqual({ acceptedTx: "acc-tx", submittedTx: "sub-tx" });
+    });
+
+    it("sends a stable X-Idempotency-Key header on every delivery attempt", async () => {
+      const headers: string[] = [];
+      globalThis.fetch = vi.fn((_url: any, init?: any) => {
+        headers.push(
+          (init?.headers as Record<string, string>)?.["x-idempotency-key"] ?? "",
+        );
+        return Promise.resolve(jsonResponse({ result: null }));
+      }) as any;
+
+      const g = gw(["http://gw-a"]);
+      await g.deliverPayload({ draft: DRAFT, bid: BID });
+
+      expect(headers).toHaveLength(1);
+      expect(headers[0]).toBeTruthy();
+      expect(headers[0]).toContain(DRAFT.jobIdHex);
+      expect(headers[0]).toContain(BID.x25519Pk);
+    });
+
+    it("sends the same idempotency key on retries (slow gateway triggers retry)", async () => {
+      const capturedKeys: string[] = [];
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn((_url: any, init?: any) => {
+        callCount += 1;
+        capturedKeys.push(
+          (init?.headers as Record<string, string>)?.["x-idempotency-key"] ?? "",
+        );
+        if (callCount === 1) {
+          // First attempt: simulate the 10s gateway timeout (return a 503 so
+          // the client retries without needing a real timer delay).
+          return Promise.resolve(new Response("Service Unavailable", { status: 503 }));
+        }
+        return Promise.resolve(jsonResponse({ result: { acceptedTx: "tx-abc" } }));
+      }) as any;
+
+      const g = gw(["http://gw-a", "http://gw-b"], { retries: 1 });
+      const result = await g.deliverPayload({ draft: DRAFT, bid: BID });
+
+      expect(result).toEqual({ acceptedTx: "tx-abc" });
+      // Two attempts were made (initial + 1 retry).
+      expect(callCount).toBe(2);
+      // Both requests carried the exact same idempotency key.
+      expect(capturedKeys[0]).toBeTruthy();
+      expect(capturedKeys[0]).toBe(capturedKeys[1]);
+    });
+
+    it("retries: 0 makes exactly one delivery attempt", async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn(() => {
+        callCount += 1;
+        return Promise.resolve(new Response("Service Unavailable", { status: 503 }));
+      }) as any;
+
+      const g = gw(["http://gw-a"], { retries: 0 });
+
+      try {
+        await g.deliverPayload({ draft: DRAFT, bid: BID });
+        expect.fail("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(GatewayError);
+        expect(callCount).toBe(1);
+      }
     });
   });
 
