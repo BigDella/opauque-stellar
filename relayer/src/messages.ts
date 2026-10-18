@@ -4,7 +4,7 @@ import { Buffer } from "buffer";
 import { assertLength, base64ToBytes, bytesToBase64, bytesToHex, concatBytes, hexToBytes } from "./shared/bytes.ts";
 import { RELAY_CHAIN_STELLAR } from "./shared/payload.ts";
 
-const BID_DOMAIN = new TextEncoder().encode("opaque-relayer-bid-v1");
+const BID_DOMAIN = new TextEncoder().encode("opaque-relayer-bid-v2");
 
 export type JobAdvert = {
   t: "advert";
@@ -88,12 +88,65 @@ export function makeAdvert(args: {
   };
 }
 
-export function bidSigningDigest(jobId: Uint8Array, x25519Pk: Uint8Array): Uint8Array {
+/**
+ * Encode a uint32 as 4 big-endian bytes.
+ */
+function uint32BE(n: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  new DataView(buf.buffer).setUint32(0, n >>> 0, false);
+  return buf;
+}
+
+/**
+ * Encode a uint64 (bigint) as 8 big-endian bytes.
+ */
+function uint64BE(n: bigint): Uint8Array {
+  const buf = new Uint8Array(8);
+  const view = new DataView(buf.buffer);
+  view.setUint32(0, Number((n >> 32n) & 0xffff_ffffn), false);
+  view.setUint32(4, Number(n & 0xffff_ffffn), false);
+  return buf;
+}
+
+/**
+ * Length-prefix a UTF-8 string as uint16 + bytes so different endpoint values
+ * cannot produce the same serialisation.
+ */
+function lengthPrefixedUtf8(s: string): Uint8Array {
+  const enc = new TextEncoder().encode(s);
+  const len = new Uint8Array(2);
+  new DataView(len.buffer).setUint16(0, enc.length, false);
+  return concatBytes(len, enc);
+}
+
+/**
+ * Canonical signed digest for a relayer bid (v2).
+ *
+ * Covers every field that influences bid selection so a hub or network
+ * intermediary cannot rewrite endpoint, freeStake, or chain without
+ * invalidating the signature:
+ *
+ *   keccak256(DOMAIN || jobId[32] || x25519Pk[32] || chain[4] ||
+ *             endpointLen[2] || endpoint[*] || freeStake[8])
+ *
+ * `endpoint` defaults to the empty string when absent.
+ * `freeStake` defaults to 0 when absent.
+ */
+export function bidSigningDigest(
+  jobId: Uint8Array,
+  x25519Pk: Uint8Array,
+  chain: number,
+  endpoint: string,
+  freeStake: bigint,
+): Uint8Array {
   return keccak_256(
     concatBytes(
       BID_DOMAIN,
       assertLength(jobId, 32, "jobId"),
       assertLength(x25519Pk, 32, "x25519Pk"),
+      uint32BE(chain),
+      lengthPrefixedUtf8(endpoint),
+      uint64BE(freeStake),
     ),
   );
 }
@@ -106,7 +159,15 @@ export function makeBid(args: {
   freeStake?: bigint;
 }): RelayerBid {
   const x25519Pk = assertLength(args.x25519Pk, 32, "x25519Pk");
-  const digest = bidSigningDigest(hexToBytes(args.advert.jobId), x25519Pk);
+  const endpoint = args.endpoint ?? "";
+  const freeStake = args.freeStake ?? 0n;
+  const digest = bidSigningDigest(
+    hexToBytes(args.advert.jobId),
+    x25519Pk,
+    args.advert.chain,
+    endpoint,
+    freeStake,
+  );
   return {
     t: "bid",
     v: 1,
@@ -122,7 +183,13 @@ export function makeBid(args: {
 
 export function verifyBid(bid: RelayerBid): boolean {
   try {
-    const digest = bidSigningDigest(hexToBytes(bid.jobId), hexToBytes(bid.x25519Pk));
+    const digest = bidSigningDigest(
+      hexToBytes(bid.jobId),
+      hexToBytes(bid.x25519Pk),
+      bid.chain ?? 0,
+      bid.endpoint ?? "",
+      bid.freeStake !== undefined ? BigInt(bid.freeStake) : 0n,
+    );
     return Keypair.fromPublicKey(bid.operator).verify(
       Buffer.from(digest),
       Buffer.from(base64ToBytes(bid.sig)),

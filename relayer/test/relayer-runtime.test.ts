@@ -164,7 +164,7 @@ async function deliver(
   tag: number,
 ): Promise<string> {
   const jobId = bytesToHex(bytes(32, tag));
-  const box = sealBox(encodePoolWithdrawPayload(p), x25519PublicKey);
+  const box = sealBox(encodePoolWithdrawPayload(p), x25519PublicKey, bytes(32, tag));
   await node.engine.handlePayload({
     t: "payload",
     v: 1,

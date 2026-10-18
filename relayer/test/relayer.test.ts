@@ -108,9 +108,20 @@ describe("relayer market shared crypto", () => {
     const recipient = generateX25519Keypair();
     const other = generateX25519Keypair();
     const plaintext = new TextEncoder().encode("blind job");
-    const box = sealBox(plaintext, recipient.publicKey);
-    expect(new TextDecoder().decode(openBox(box, recipient.secretKey))).toBe("blind job");
-    expect(() => openBox(box, other.secretKey)).toThrow(/decrypt/i);
+    const jobId = bytes(32, 0xaa);
+    const box = sealBox(plaintext, recipient.publicKey, jobId);
+    expect(new TextDecoder().decode(openBox(box, recipient.secretKey, jobId))).toBe("blind job");
+    expect(() => openBox(box, other.secretKey, jobId)).toThrow(/decrypt/i);
+  });
+
+  it("rejects cross-job replay — ciphertext from job A cannot be opened as job B", () => {
+    const recipient = generateX25519Keypair();
+    const plaintext = new TextEncoder().encode("payload");
+    const jobA = bytes(32, 0xa1);
+    const jobB = bytes(32, 0xb2);
+    const box = sealBox(plaintext, recipient.publicKey, jobA);
+    // Opening with the correct key but the wrong job ID must fail.
+    expect(() => openBox(box, recipient.secretKey, jobB)).toThrow(/job ID mismatch|decrypt/i);
   });
 });
 
@@ -250,7 +261,7 @@ describe("relayer engine", () => {
       chain,
     });
     const jobId = bytesToHex(bytes(32, 0x12));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x12));
     const result = await engine.handlePayload({ t: "payload", v: 1, jobId, to: bytesToHex(x25519.publicKey), box });
     expect(result).toEqual({ acceptedTx: "accept-tx", submittedTx: "submit-tx" });
     expect(chain.simulated).toBe(1);
@@ -270,7 +281,7 @@ describe("relayer engine", () => {
       chain,
     });
     const p = payload(operator.publicKey());
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x13));
     await expect(
       engine.handlePayload({ t: "payload", v: 1, jobId: bytesToHex(bytes(32, 0x13)), to: bytesToHex(x25519.publicKey), box }),
     ).rejects.toThrow(/hash mismatch/i);
@@ -291,7 +302,7 @@ describe("relayer engine", () => {
       chain,
     });
     const jobId = bytesToHex(bytes(32, 0x18));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x18));
     const idempotencyKey = "test-key-001";
 
     const first = await engine.handlePayload({
@@ -321,7 +332,7 @@ describe("relayer engine", () => {
       chain,
     });
     const jobId = bytesToHex(bytes(32, 0x19));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x19));
     const idempotencyKey = "concurrent-key-001";
 
     const results = await Promise.all([

@@ -157,7 +157,7 @@ async function deliver(
   tag: number,
 ): Promise<string> {
   const jobId = bytesToHex(bytes(32, tag));
-  const box = sealBox(encodePoolWithdrawPayload(p), x25519PublicKey);
+  const box = sealBox(encodePoolWithdrawPayload(p), x25519PublicKey, bytes(32, tag));
   await node.engine.handlePayload({
     t: "payload",
     v: 1,
@@ -227,7 +227,7 @@ describe("durable accept-submit (#975)", () => {
     });
 
     const jobId = bytesToHex(bytes(32, 0x42));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x42));
     await expect(
       first.engine.handlePayload({ t: "payload", v: 1, jobId, to: bytesToHex(x25519.publicKey), box }),
     ).rejects.toThrow(/submit unavailable/);
@@ -284,7 +284,7 @@ describe("durable accept-submit (#975)", () => {
       x25519SecretKey: x25519.secretKey,
     });
     const jobId = bytesToHex(bytes(32, 0x43));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x43));
     await expect(
       first.engine.handlePayload({ t: "payload", v: 1, jobId, to: bytesToHex(x25519.publicKey), box }),
     ).rejects.toThrow();
@@ -379,7 +379,7 @@ describe("durable accept-submit (#975)", () => {
       x25519SecretKey: x25519.secretKey,
     });
     const jobId = bytesToHex(bytes(32, 0x45));
-    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey);
+    const box = sealBox(encodePoolWithdrawPayload(p), x25519.publicKey, bytes(32, 0x45));
     await expect(
       first.engine.handlePayload({ t: "payload", v: 1, jobId, to: bytesToHex(x25519.publicKey), box }),
     ).rejects.toThrow();

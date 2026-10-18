@@ -159,10 +159,10 @@ export class PayoutReconciler {
       }
 
       const feeMatches = onChain.fee === entry.expectedFee;
-      const statusOk =
-        onChain.status === "submitted" ||
-        onChain.status === "slashed" ||
-        onChain.status === "canceled";
+      // Only "submitted" is a clean outcome for a job this relayer recorded as
+      // submitted. "slashed" and "canceled" mean the relayer was penalised or
+      // the job was voided — both are actionable discrepancies.
+      const statusOk = onChain.status === "submitted";
 
       if (feeMatches && statusOk) {
         results.push({
@@ -183,7 +183,7 @@ export class PayoutReconciler {
         }
         if (!statusOk) {
           reasons.push(
-            `unexpected status: ${onChain.status} (expected submitted/slashed/canceled)`,
+            `unexpected status: ${onChain.status} (expected submitted)`,
           );
         }
         results.push({

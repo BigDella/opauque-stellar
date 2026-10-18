@@ -7,7 +7,7 @@ import {
   parsePoolWithdrawPayload,
   type PoolWithdrawPayload,
 } from "./shared/payload.ts";
-import { bytesToHex } from "./shared/bytes.ts";
+import { bytesToHex, hexToBytes } from "./shared/bytes.ts";
 import {
   makeBid,
   validateAdvert,
@@ -286,7 +286,7 @@ export class RelayerEngine {
       // it would let a third party drag the completion-rate score down.
       let acceptedJob = false;
       try {
-        const plaintext = openBox(payloadMsg.box, this.cfg.x25519SecretKey);
+        const plaintext = openBox(payloadMsg.box, this.cfg.x25519SecretKey, hexToBytes(payloadMsg.jobId));
         const payload = decodePoolWithdrawPayload(plaintext);
         const job = await this.cfg.chain.getJob(payloadMsg.jobId);
         if (!job?.exists || job.status !== "open") return null;
