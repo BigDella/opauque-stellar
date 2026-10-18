@@ -6,6 +6,7 @@
 import type { ResolvedConfig } from "../config/index";
 import type { OpaqueSigner } from "../signer/index";
 import type { ContractInvoker } from "../rpc/client";
+import type { TransferMemo } from "../crypto/memo";
 import type { NoteStore, VaultStore, ScanStore } from "../storage/index";
 import type { ArtifactResolver } from "../artifacts/index";
 import type {
@@ -50,5 +51,20 @@ export interface OpaqueClientContext {
     destination: string;
     amountStroops: bigint;
     signer: OpaqueSigner;
+    /** Max fee per operation, in stroops. Defaults to BASE_FEE. */
+    feePerOperation?: string | number;
+    /** Validated memo to attach to the transfer. */
+    memo?: TransferMemo;
+  }): Promise<string>;
+  /** Merge a source account into a destination, recovering the full reserve. */
+  accountMerge(opts: {
+    sourceSigner: OpaqueSigner;
+    destination: string;
+  }): Promise<string>;
+  /** Fee-bump an already-signed, stuck transaction and resubmit it. */
+  feeBumpTransaction(opts: {
+    feeSigner: OpaqueSigner;
+    innerTransactionXdr: string;
+    feePerOperation: string | number;
   }): Promise<string>;
 }

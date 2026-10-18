@@ -109,3 +109,44 @@ export function memoWarningCopy(
   if (memo && memo.trim().length > 0) return null;
   return `Destination looks like ${risk.custodianName ?? "an exchange or custodian"}. Sending without a memo may result in lost funds.`;
 }
+
+/** A memo to attach to an outgoing transfer. */
+export interface TransferMemo {
+  type: MemoType;
+  value: string;
+}
+
+/**
+ * Resolve the memo a transfer to `destination` must carry.
+ *
+ * - A provided memo is validated against the Stellar memo spec; an invalid
+ *   memo throws.
+ * - A known custodial destination *requires* a memo — sending without one can
+ *   permanently lose the funds, so this throws instead of warning.
+ * - Any other destination returns the memo as provided (or undefined).
+ *
+ * Throws plain `TypeError`s here; the services layer wraps them in the typed
+ * {@link MemoError} so callers get a stable error code.
+ */
+export function resolveTransferMemo(
+  destination: string,
+  memo?: TransferMemo,
+): TransferMemo | undefined {
+  const risk = memoRiskFor(destination);
+
+  if (memo) {
+    const result = validateMemo(memo.type, memo.value);
+    if (!result.ok) {
+      throw new TypeError(`Invalid memo: ${result.error}`);
+    }
+    return memo;
+  }
+
+  if (risk.isKnownCustodian) {
+    throw new TypeError(
+      `Destination is ${risk.custodianName ?? "a known custodian"}; a ${risk.recommendedMemoType ?? "text"} memo is required.`,
+    );
+  }
+
+  return undefined;
+}

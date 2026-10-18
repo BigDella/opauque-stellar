@@ -5,10 +5,12 @@
  * diagnostics. No ambient globals: everything comes from {@link ResolvedConfig}.
  */
 import {
+  Account,
   Asset,
   BASE_FEE,
   Contract,
   Horizon,
+  Memo,
   Operation,
   TransactionBuilder,
   rpc,
@@ -18,10 +20,12 @@ import {
 import type { ResolvedConfig } from "../config/index";
 import type { OpaqueSigner } from "../signer/index";
 import { formatStroopsToXlm } from "../crypto/amount";
+import type { TransferMemo } from "../crypto/memo";
 import { silentLogger, type Logger } from "../logger/index";
 import { noopTelemetry, type Telemetry } from "../telemetry/index";
 import {
   ContractError,
+  MergeIncompatibleError,
   RpcError,
   SimulationError,
 } from "../errors/index";
@@ -38,6 +42,57 @@ export const NEW_ACCOUNT_MIN_RESERVE_STROOPS = 10_000_000n;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Map a validated {@link TransferMemo} onto its stellar-sdk `Memo`. */
+function toStellarSdkMemo(memo?: TransferMemo): Memo | undefined {
+  if (!memo) return undefined;
+  switch (memo.type) {
+    case "none":
+      return undefined;
+    case "text":
+      return Memo.text(memo.value);
+    case "id":
+      return Memo.id(memo.value);
+    case "hash":
+      return Memo.hash(memo.value);
+    case "return":
+      return Memo.return(memo.value);
+  }
+}
+
+/**
+ * Build a fee-bump envelope around an already-signed inner transaction.
+ * Pure: no network access — the caller loads the fee source account (sequence
+ * number) and submits the returned XDR.
+ *
+ * @param feeSource        Fee-bump source account (with its current sequence).
+ * @param feePerOperation  Max fee per operation, in stroops (string or number).
+ * @param innerTransactionXdr  The signed inner transaction, as base64 XDR.
+ * @param networkPassphrase   Passphrase the inner transaction was built for.
+ */
+export function buildFeeBumpXdr(opts: {
+  feeSource: Account;
+  feePerOperation: string | number;
+  innerTransactionXdr: string;
+  networkPassphrase: string;
+}): string {
+  let inner;
+  try {
+    inner = TransactionBuilder.fromXDR(opts.innerTransactionXdr, opts.networkPassphrase);
+  } catch (err) {
+    throw new RpcError("Inner transaction XDR could not be parsed.", { cause: err });
+  }
+  try {
+    return TransactionBuilder.buildFeeBumpTransaction(
+      opts.feeSource,
+      String(opts.feePerOperation),
+      inner,
+      opts.networkPassphrase,
+    ).toXDR();
+  } catch (err) {
+    throw new RpcError("Fee-bump transaction could not be built.", { cause: err });
+  }
 }
 
 /**
@@ -231,11 +286,22 @@ export class RpcClient {
    * Send a native XLM transfer. Uses `createAccount` when the destination does
    * not exist yet (stealth accounts), otherwise a `payment`. Signs via the
    * provided signer and submits through Horizon.
+   *
+   * `feePerOperation` caps the fee this transaction may pay, in stroops
+   * (stellar-sdk multiplies by the operation count). Defaults to `BASE_FEE`
+   * (100). Raise it during congestion to get included sooner.
+   *
+   * `memo` is attached to the payment/createAccount operation (validated by
+   * the caller or via `payments.send` / `payments.sweep`).
    */
   async sendNativeTransfer(opts: {
     destination: string;
     amountStroops: bigint;
     signer: OpaqueSigner;
+    /** Max fee per operation, in stroops. Defaults to BASE_FEE. */
+    feePerOperation?: string | number;
+    /** Memo to attach (validate with crypto/memo first). */
+    memo?: TransferMemo;
   }): Promise<string> {
     const source = await opts.signer.publicKey();
     const horizon = this.horizon();
@@ -254,14 +320,93 @@ export class RpcClient {
       : Operation.createAccount({ destination: opts.destination, startingBalance: amount });
 
     const tx = new TransactionBuilder(sourceAccount, {
-      fee: BASE_FEE,
+      fee: opts.feePerOperation != null ? String(opts.feePerOperation) : BASE_FEE,
       networkPassphrase: this.config.passphrase,
     })
       .addOperation(op)
+      .addMemo(toStellarSdkMemo(opts.memo) ?? Memo.none())
       .setTimeout(180)
       .build();
 
     const signedXdr = await opts.signer.signTransaction(tx.toXDR(), {
+      networkPassphrase: this.config.passphrase,
+    });
+    const signed = TransactionBuilder.fromXDR(signedXdr, this.config.passphrase);
+    const result = await horizon.submitTransaction(
+      signed as Parameters<Horizon.Server["submitTransaction"]>[0],
+    );
+    return result.hash;
+  }
+
+  /**
+   * Fee-bump a stuck, already-signed transaction: wrap it in a new envelope
+   * that pays a higher fee, sign with the fee source, and resubmit. The inner
+   * transaction keeps its original source and operations; Horizon replaces the
+   * stalled entry when the bump lands.
+   */
+  async feeBumpTransaction(opts: {
+    /** Account footing the bumped fee (must be able to sign). */
+    feeSigner: OpaqueSigner;
+    /** Signed inner transaction to bump, as base64 XDR. */
+    innerTransactionXdr: string;
+    /** New max fee per operation, in stroops; must exceed the inner fee. */
+    feePerOperation: string | number;
+  }): Promise<string> {
+    const feeSource = await opts.feeSigner.publicKey();
+    const horizon = this.horizon();
+    const account = await horizon.loadAccount(feeSource);
+    const bumpXdr = buildFeeBumpXdr({
+      feeSource: account,
+      feePerOperation: opts.feePerOperation,
+      innerTransactionXdr: opts.innerTransactionXdr,
+      networkPassphrase: this.config.passphrase,
+    });
+    const signedXdr = await opts.feeSigner.signTransaction(bumpXdr, {
+      networkPassphrase: this.config.passphrase,
+    });
+    const signed = TransactionBuilder.fromXDR(signedXdr, this.config.passphrase);
+    const result = await horizon.submitTransaction(
+      signed as Parameters<Horizon.Server["submitTransaction"]>[0],
+    );
+    return result.hash;
+  }
+
+  /**
+   * Merge a Stellar account into `destination`, recovering the full balance —
+   * including the base reserve a payment-based sweep leaves behind. Refuses
+   * with {@link MergeIncompatibleError} when the account holds state a merge
+   * cannot delete (trustlines, offers); fall back to a partial
+   * {@link sendNativeTransfer} sweep in that case.
+   */
+  async accountMerge(opts: {
+    sourceSigner: OpaqueSigner;
+    destination: string;
+  }): Promise<string> {
+    const source = await opts.sourceSigner.publicKey();
+    const horizon = this.horizon();
+    const account = await horizon.loadAccount(source);
+
+    // `accountMerge` deletes the account; anything other than a pure native
+    // balance (a trustline, an offer, liabilities) makes the operation fail
+    // on-chain after the fee is burned. Detect the common case up-front.
+    const incompatible = (account.balances ?? [])
+      .filter((b: { asset_type: string }) => b.asset_type !== "native")
+      .map((b: { asset_type: string; asset_code?: string; asset_issuer?: string }) =>
+        b.asset_code ? `${b.asset_code}:${b.asset_issuer ?? "?"}` : b.asset_type,
+      );
+    if (incompatible.length > 0) {
+      throw new MergeIncompatibleError(source, incompatible);
+    }
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.config.passphrase,
+    })
+      .addOperation(Operation.accountMerge({ destination: opts.destination }))
+      .setTimeout(180)
+      .build();
+
+    const signedXdr = await opts.sourceSigner.signTransaction(tx.toXDR(), {
       networkPassphrase: this.config.passphrase,
     });
     const signed = TransactionBuilder.fromXDR(signedXdr, this.config.passphrase);

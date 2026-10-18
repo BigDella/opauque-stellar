@@ -39,11 +39,13 @@ signer, including the blind-signing limitations of Soroban invocations.
 - `deriveIdentity(signatureHex)` — viewing/spending keys + meta-address
 - `register({ metaAddress })`
 - `prepareTransfer(metaHex)` — one-time address + announcement params
-- `send({ to, amountXlm })`
+- `send({ to, amountXlm, memo?, feePerOperation? })` — memo required for known custodial destinations; if the payment lands but the announcement fails, throws `UnannouncedPaymentError` with everything needed to retry
+- `announcePaidTransfer({ stealthAddress, ephemeralPubKey, metadata })` — retry a failed announcement (`err.toAnnounceParams()` supplies the arguments)
 - `scan({ announcements, identity })` — pure-TS, returns matches
 - `scanIterator({ identity, startLedger?, cursorKey?, maxPages?, allowTruncation? })` — async generator, streams matches from chain with a resumable, **per-identity** cursor; throws `EventTruncationError` rather than returning a partial scan
 - `scanCursorKey(identity)` — the `ScanStore` key an identity's cursor lives under
-- `sweep({ stealthPrivKey, destination, amountStroops })`
+- `sweep({ stealthPrivKey, destination, amountStroops, memo?, feePerOperation? })`
+- `sweepWithMerge({ stealthPrivKey, destination })` — merges the stealth account, recovering the full balance including the base reserve; throws `MergeIncompatibleError` for trustlines/offers (fall back to `sweep`)
 
 ### `pool`
 - `deposit({ amountXlm })` — reads index, derives commitment, persists note
@@ -77,6 +79,30 @@ signer, including the blind-signing limitations of Soroban invocations.
 The wire format + gateway client are also exported from
 `@opaquecash/stellar/relayer-protocol`.
 
+## Fees
+
+Every transaction path submits with `BASE_FEE` (100 stroops per operation)
+unless told otherwise:
+
+- `feePerOperation` — accepted by `payments.send`, `payments.sweep`, and the
+  low-level `sendNativeTransfer`. It caps the fee per operation, in stroops;
+  stellar-sdk multiplies by the operation count. Raise it to get included
+  during congestion.
+
+Stuck transactions can be fee-bumped instead of rebuilt:
+
+```ts
+await opaque.feeBumpTransaction({
+  feeSigner,                      // pays the bumped fee
+  innerTransactionXdr,            // the original signed transaction
+  feePerOperation: "5000",        // must exceed the inner fee
+});
+```
+
+The bump wraps the inner transaction in a new envelope; Horizon replaces the
+stalled entry when it lands. `buildFeeBumpXdr` (exported from the rpc module)
+builds the envelope without submitting it.
+
 ## Escape hatches
 
 ```ts
@@ -90,4 +116,7 @@ opaque.soroban;                // built-in RpcClient (Soroban + Horizon), or und
 All errors extend `OpaqueError` with a stable `code`: `ConfigError`,
 `SignerError`, `RpcError`, `SimulationError`, `ContractError` (carries
 `contract` + `contractCode`), `RootUnavailableError`, `ArtifactError`,
-`NotWiredError`.
+`NotWiredError`, `MemoError` (custodial destination without/with invalid
+memo), `UnannouncedPaymentError` (payment landed, announcement failed;
+carries retry parameters), `MergeIncompatibleError` (merge sweep blocked by
+trustlines/offers).

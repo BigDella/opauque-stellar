@@ -178,6 +178,10 @@ export class OpaqueClient implements OpaqueClientContext {
     destination: string;
     amountStroops: bigint;
     signer: OpaqueSigner;
+    /** Max fee per operation, in stroops. Defaults to BASE_FEE. */
+    feePerOperation?: string | number;
+    /** Validated memo to attach to the transfer. */
+    memo?: import("../crypto/memo").TransferMemo;
   }): Promise<string> {
     if (!this.rpcClient) {
       throw new RpcError(
@@ -185,6 +189,36 @@ export class OpaqueClient implements OpaqueClientContext {
       );
     }
     return this.rpcClient.sendNativeTransfer(opts);
+  }
+
+  /** Merge an account into a destination, recovering the full base reserve. */
+  accountMerge(opts: {
+    sourceSigner: OpaqueSigner;
+    destination: string;
+  }): Promise<string> {
+    if (!this.rpcClient) {
+      throw new RpcError(
+        "Account merges require the built-in RpcClient (unavailable with a custom invoker).",
+      );
+    }
+    return this.rpcClient.accountMerge(opts);
+  }
+
+  /**
+   * Fee-bump an already-signed, stuck transaction through the built-in
+   * RpcClient (`feeSigner` pays the bumped fee).
+   */
+  feeBumpTransaction(opts: {
+    feeSigner: OpaqueSigner;
+    innerTransactionXdr: string;
+    feePerOperation: string | number;
+  }): Promise<string> {
+    if (!this.rpcClient) {
+      throw new RpcError(
+        "Fee bumps require the built-in RpcClient (unavailable with a custom invoker).",
+      );
+    }
+    return this.rpcClient.feeBumpTransaction(opts);
   }
 
   /**

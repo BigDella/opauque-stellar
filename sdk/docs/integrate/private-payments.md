@@ -139,9 +139,24 @@ Move the funds from the one-time stealth account to a destination the recipient
 controls. The stealth account signs **itself** (derived from the one-time key),
 so the connected wallet is never the source.
 
+The preferred path is a **merge sweep**: `accountMerge` deletes the stealth
+account and moves the *entire* balance — including the ~0.5–1 XLM base reserve
+a payment-based sweep strands in every swept account:
+
 ```ts
 import { parseXlmToStroops } from "@opaquecash/stellar";
 
+await opaque.payments.sweepWithMerge({
+  stealthPrivKey: matches[0].stealthPrivKey,
+  destination: myMainAccount,
+});
+```
+
+If the stealth account holds state a merge cannot delete (a trustline or open
+offer), `sweepWithMerge` throws `MergeIncompatibleError` — fall back to a
+partial sweep that reserves the base reserve and fee:
+
+```ts
 await opaque.payments.sweep({
   stealthPrivKey: matches[0].stealthPrivKey,
   destination: myMainAccount,
