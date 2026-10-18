@@ -230,6 +230,104 @@ export class CompatibilityError extends OpaqueError {
 }
 
 /**
+ * A transfer to a known custodial destination was attempted without a memo
+ * (or with one that fails the Stellar memo spec). Exchanges route deposits by
+ * memo, so an unmemoed transfer to a custodian is unrecoverable.
+ */
+export class MemoError extends OpaqueError {
+  readonly destination?: string;
+  readonly custodianName?: string;
+  constructor(
+    message: string,
+    options?: { destination?: string; custodianName?: string; cause?: unknown },
+  ) {
+    super(message, "MEMO", options);
+    this.destination = options?.destination;
+    this.custodianName = options?.custodianName;
+  }
+}
+
+/**
+ * The payment half of a stealth send landed on-chain but the announcement
+ * transaction failed. The funds are sitting in a one-time stealth account the
+ * recipient cannot discover until the announcement is published. Carries
+ * everything needed to retry the announcement via
+ * `payments.announcePaidTransfer` — the exact ephemeral key and metadata
+ * (re-deriving from the recipient meta-address would produce a *different*
+ * stealth address).
+ */
+export class UnannouncedPaymentError extends OpaqueError {
+  readonly paymentTxHash: string;
+  readonly recipientMetaHex: string;
+  readonly stealthAddressHex: string;
+  readonly ephemeralPubKey: Uint8Array;
+  readonly metadata: Uint8Array;
+  readonly amountStroops: bigint;
+
+  constructor(
+    options: {
+      paymentTxHash: string;
+      recipientMetaHex: string;
+      stealthAddressHex: string;
+      ephemeralPubKey: Uint8Array;
+      metadata: Uint8Array;
+      amountStroops: bigint;
+      cause?: unknown;
+    },
+  ) {
+    super(
+      `Payment ${options.paymentTxHash} succeeded but the announcement failed; the funds are in unannounced stealth account ${options.stealthAddressHex}. Retry with payments.announcePaidTransfer.`,
+      "UNANNOUNCED_PAYMENT",
+      { cause: options.cause },
+    );
+    this.paymentTxHash = options.paymentTxHash;
+    this.recipientMetaHex = options.recipientMetaHex;
+    this.stealthAddressHex = options.stealthAddressHex;
+    this.ephemeralPubKey = options.ephemeralPubKey;
+    this.metadata = options.metadata;
+    this.amountStroops = options.amountStroops;
+  }
+
+  /** The exact parameters to pass to `payments.announcePaidTransfer`. */
+  toAnnounceParams(): {
+    stealthAddress: Uint8Array;
+    ephemeralPubKey: Uint8Array;
+    metadata: Uint8Array;
+  } {
+    // Decode from hex lazily so the error stays cheap to construct.
+    const bytes = (hex: string): Uint8Array => {
+      const h = hex.startsWith("0x") ? hex.slice(2) : hex;
+      return Uint8Array.from(h.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
+    };
+    return {
+      stealthAddress: bytes(this.stealthAddressHex),
+      ephemeralPubKey: this.ephemeralPubKey,
+      metadata: this.metadata,
+    };
+  }
+}
+
+/**
+ * An account-merge sweep cannot proceed because the stealth account holds a
+ * state `accountMerge` cannot delete (typically a trustline or open offer).
+ * Callers should fall back to {@link PaymentsService.sweep} with the spendable
+ * balance, which leaves the base reserve behind but moves the funds.
+ */
+export class MergeIncompatibleError extends OpaqueError {
+  readonly account: string;
+  readonly balances: string[];
+  constructor(account: string, balances: string[]) {
+    super(
+      `Account ${account} cannot be merged (incompatible state: ${balances.join(", ")}). ` +
+        "Fall back to a partial sweep; the base reserve will remain in the account.",
+      "MERGE_INCOMPATIBLE",
+    );
+    this.account = account;
+    this.balances = balances;
+  }
+}
+
+/**
  * Known contract error enums, keyed by contract package name. Populated as the
  * SDK binds each contract; an unknown code still surfaces as a numeric
  * {@link ContractError}. Source of truth is each contract's `#[contracterror]`.

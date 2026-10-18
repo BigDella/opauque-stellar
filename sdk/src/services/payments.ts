@@ -11,15 +11,19 @@ import {
   deriveStealthStellarKeypairFromStealthPrivKey,
   hexToBytes,
   keysToStealthMetaAddress,
+  memoRiskFor,
   parseXlmToStroops,
+  resolveTransferMemo,
   scanAnnouncements,
   stealthMetaAddressToHex,
   bytesToHex,
   type Hex,
   type ScanMatch,
   type StealthAnnouncement,
+  type TransferMemo,
 } from "../crypto/index";
 import { keypairSigner } from "../signer/index";
+import { MemoError, UnannouncedPaymentError } from "../errors/index";
 import type { OpaqueClientContext } from "./context";
 
 export interface StealthIdentity {
@@ -72,10 +76,23 @@ export class PaymentsService {
   /**
    * Send a stealth XLM payment: pay the one-time stealth Stellar account, then
    * publish the announcement so the recipient can detect and sweep it.
+   *
+   * `memo` is attached to the payment. Known custodial destinations *require*
+   * a memo ({@link MemoError}); any provided memo is validated against the
+   * Stellar memo spec.
+   *
+   * If the payment lands but the announcement transaction fails, throws
+   * {@link UnannouncedPaymentError} carrying the exact ephemeral key and
+   * metadata needed to retry with {@link announcePaidTransfer} — the funds
+   * are recoverable, not lost.
    */
   async send(opts: {
     to: string;
     amountXlm: string;
+    /** Memo attached to the underlying payment; required for custodial destinations. */
+    memo?: TransferMemo;
+    /** Max fee per operation for the payment, in stroops. */
+    feePerOperation?: string | number;
   }): Promise<{
     stealthStellarAddress: string;
     ephemeralPubKey: Uint8Array;
@@ -83,6 +100,7 @@ export class PaymentsService {
     announceTxHash: string;
   }> {
     const signer = this.ctx.requireSigner();
+    const memo = this.resolveMemo(opts.to, opts.memo);
     const stealth = computeStealthAddressAndViewTag(opts.to);
     const amountStroops = parseXlmToStroops(opts.amountXlm);
 
@@ -90,13 +108,33 @@ export class PaymentsService {
       destination: stealth.stealthStellarAddress,
       amountStroops,
       signer,
+      memo,
+      feePerOperation: opts.feePerOperation,
     });
-    const announceTxHash = await this.ctx.contracts.stealthAnnouncer.announce({
-      stealthAddress: hexToBytes(stealth.stealthAddress),
-      ephemeralPubKey: stealth.ephemeralPubKey,
-      metadata: stealth.metadata,
-      signer,
-    });
+
+    let announceTxHash: string;
+    try {
+      announceTxHash = await this.ctx.contracts.stealthAnnouncer.announce({
+        stealthAddress: hexToBytes(stealth.stealthAddress),
+        ephemeralPubKey: stealth.ephemeralPubKey,
+        metadata: stealth.metadata,
+        signer,
+      });
+    } catch (err) {
+      // The payment is on-chain but undiscoverable until announced. Surface
+      // every parameter of the exact transfer so the caller can retry the
+      // announcement without re-paying.
+      throw new UnannouncedPaymentError({
+        paymentTxHash,
+        recipientMetaHex: opts.to,
+        stealthAddressHex: stealth.stealthAddress,
+        ephemeralPubKey: stealth.ephemeralPubKey,
+        metadata: stealth.metadata,
+        amountStroops,
+        cause: err,
+      });
+    }
+
     return {
       stealthStellarAddress: stealth.stealthStellarAddress,
       ephemeralPubKey: stealth.ephemeralPubKey,
@@ -106,22 +144,94 @@ export class PaymentsService {
   }
 
   /**
+   * Retry the announcement half of a send whose payment landed but whose
+   * announcement failed (see {@link UnannouncedPaymentError}). Pass
+   * `err.toAnnounceParams()` — or the equivalent fields from a persisted
+   * record — to publish the *exact* original announcement; re-deriving from
+   * the recipient meta-address would produce a different stealth address.
+   *
+   * @returns the announcement transaction hash.
+   */
+  async announcePaidTransfer(opts: {
+    stealthAddress: Uint8Array;
+    ephemeralPubKey: Uint8Array;
+    metadata: Uint8Array;
+  }): Promise<string> {
+    const signer = this.ctx.requireSigner();
+    return this.ctx.contracts.stealthAnnouncer.announce({
+      stealthAddress: opts.stealthAddress,
+      ephemeralPubKey: opts.ephemeralPubKey,
+      metadata: opts.metadata,
+      signer,
+    });
+  }
+
+  /**
    * Sweep a detected stealth account to a destination. The stealth account signs
    * itself (derived from the one-time key), so the connected wallet is never the
    * source. `amountStroops` is the exact amount to move (compute the spendable
    * balance from Horizon, reserving fee + minimum balance).
+   *
+   * `memo` is attached to the sweep payment; known custodial destinations
+   * require one ({@link MemoError}).
    */
   async sweep(opts: {
     stealthPrivKey: Uint8Array;
     destination: string;
     amountStroops: bigint;
+    /** Memo attached to the sweep payment; required for custodial destinations. */
+    memo?: TransferMemo;
+    /** Max fee per operation, in stroops. */
+    feePerOperation?: string | number;
   }): Promise<string> {
+    const memo = this.resolveMemo(opts.destination, opts.memo);
     const keypair = deriveStealthStellarKeypairFromStealthPrivKey(opts.stealthPrivKey);
     return this.ctx.sendNativeTransfer({
       destination: opts.destination,
       amountStroops: opts.amountStroops,
       signer: keypairSigner(keypair),
+      memo,
+      feePerOperation: opts.feePerOperation,
     });
+  }
+
+  /**
+   * Sweep a stealth account by *merging* it into `destination`, recovering the
+   * full balance **including the base reserve** a payment-based sweep strands.
+   *
+   * The account must hold nothing but native XLM: a trustline or open offer
+   * makes `accountMerge` fail on-chain, so those states are detected up-front
+   * and rejected with a clear error — fall back to {@link sweep} with the
+   * spendable balance in that case.
+   *
+   * @returns the merge transaction hash.
+   */
+  async sweepWithMerge(opts: {
+    stealthPrivKey: Uint8Array;
+    destination: string;
+  }): Promise<string> {
+    const keypair = deriveStealthStellarKeypairFromStealthPrivKey(opts.stealthPrivKey);
+    return this.ctx.accountMerge({
+      sourceSigner: keypairSigner(keypair),
+      destination: opts.destination,
+    });
+  }
+
+  /** Validate a transfer memo, surfacing failures as {@link MemoError}. */
+  private resolveMemo(
+    destination: string,
+    memo?: TransferMemo,
+  ): TransferMemo | undefined {
+    try {
+      return resolveTransferMemo(destination, memo);
+    } catch (err) {
+      const risk = memoRiskFor(destination);
+      throw new MemoError((err as Error).message, {
+        destination,
+        custodianName: risk.custodianName,
+        cause: err,
+      });
+    }
   }
 
   /**
