@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Reputation publisher CLI.
  *

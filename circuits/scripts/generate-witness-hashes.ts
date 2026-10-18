@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate witness determinism fixture hashes for v2 and v3 circuits.
  *

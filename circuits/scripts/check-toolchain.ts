@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Preflight toolchain verification for circuit builds (issue #601).
  *

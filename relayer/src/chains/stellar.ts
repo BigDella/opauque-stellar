@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   Address,
   BASE_FEE,

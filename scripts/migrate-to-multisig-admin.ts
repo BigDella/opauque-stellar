@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Deploys `multisig-admin` and transfers protocol admin on the four
  * single-key-admin registries to it (#771).

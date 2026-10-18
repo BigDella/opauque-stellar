@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Shared helpers for artifact manifest read/update/verify.
  */

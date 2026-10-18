@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Regenerate THIRD_PARTY_NOTICES.md from the current Rust + npm dependency
  * trees (#470). Run after adding, removing, or upgrading a dependency that

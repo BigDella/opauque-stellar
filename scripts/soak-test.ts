@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Soak test harness for long-running protocol services (ASP, Publisher, Relayer).
  *

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Minimal reputation publisher HTTP API.
  *

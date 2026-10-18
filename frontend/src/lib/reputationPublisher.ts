@@ -40,13 +40,35 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+/**
+ * Sign the submission with the user's stealth identity (#1159).
+ * The signature proves the caller controls the attested identity
+ * without requiring a shared secret.
+ */
+async function signSubmission(
+  submission: ReputationLeafSubmission,
+  signMessage: (msg: string) => Promise<string>,
+): Promise<string> {
+  const message = JSON.stringify({
+    id: submission.id,
+    leaf: submission.leaf,
+    timestamp: Date.now(),
+  });
+  return signMessage(message);
+}
+
 export async function submitLeafAndFetchInclusion(
   submission: ReputationLeafSubmission,
+  signMessage: (msg: string) => Promise<string>,
 ): Promise<ReputationPublisherInclusion> {
   const base = publisherBaseUrl();
+  const signature = await signSubmission(submission, signMessage);
   const res = await fetch(`${base}/v1/reputation/leaves`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-reputation-signature": signature,
+    },
     body: JSON.stringify(submission),
   });
   const data = await parseJsonResponse<{ inclusion?: ReputationPublisherInclusion }>(res);

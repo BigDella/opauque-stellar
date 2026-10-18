@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Byte-stability check for scanner WASM rebuilds.
  *

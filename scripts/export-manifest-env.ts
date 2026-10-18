@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Prints GitHub Actions / shell env exports from a deployment manifest.
  *

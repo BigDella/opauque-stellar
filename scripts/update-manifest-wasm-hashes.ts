@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Writes SHA-256 WASM hashes from stellar contract build output into the manifest.
  *

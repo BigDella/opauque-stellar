@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate deterministic fixtures for the V3 privacy-pool withdraw circuit:
  *   circuits/fixtures/v3/{valid-input,invalid-input,expected-public}.json

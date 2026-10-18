@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Shared logic for generating and verifying THIRD_PARTY_NOTICES.md (#470).
  *

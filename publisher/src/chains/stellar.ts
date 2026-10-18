@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Soroban adapter for reputation-verifier roots.
  *

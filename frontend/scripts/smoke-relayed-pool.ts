@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Phase 6 headless e2e smoke for relayed privacy-pool withdrawals.
  *

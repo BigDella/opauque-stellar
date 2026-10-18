@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Checks the TTL status of persistent storage entries for deployed contracts.
  *

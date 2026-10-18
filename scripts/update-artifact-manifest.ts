@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Compute SHA-256 hashes for build artifacts and write artifacts/manifest.json.
  * Optionally syncs circuit/scanner hashes into deployments/v1/*.json.

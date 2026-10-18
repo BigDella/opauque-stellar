@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate deterministic circuit regression fixtures (V1 + V2).
  * Run: node circuits/scripts/generate-fixtures.mjs

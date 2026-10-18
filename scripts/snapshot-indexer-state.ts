@@ -77,22 +77,37 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): Options {
   const flags = new Map<string, string>();
   let force = false;
+  const positional: string[] = [];
+  const consumed = new Set<number>();
 
   for (let i = 0; i < argv.length; i++) {
+    if (consumed.has(i)) continue;
     const arg = argv[i];
     if (arg === "--force") {
       force = true;
       continue;
     }
-    if (!arg.startsWith("--")) continue;
-    const [name, inlineValue] = arg.slice(2).split(/=(.*)/s);
-    if (name === undefined) continue;
-    const value = inlineValue ?? argv[++i];
-    if (value === undefined) fail(`Option --${name} needs a value`);
-    flags.set(name, value);
+    if (arg.startsWith("--")) {
+      const [name, inlineValue] = arg.slice(2).split(/=(.*)/s);
+      if (name === undefined) continue;
+      let value: string | undefined;
+      if (inlineValue !== undefined) {
+        value = inlineValue;
+      } else {
+        // Mark next arg as consumed (option value)
+        const nextIdx = i + 1;
+        if (nextIdx < argv.length && !argv[nextIdx].startsWith("-")) {
+          value = argv[nextIdx];
+          consumed.add(nextIdx);
+        }
+      }
+      if (value === undefined) fail(`Option --${name} needs a value`);
+      flags.set(name, value);
+    } else if (!arg.startsWith("-")) {
+      positional.push(arg);
+    }
   }
 
-  const positional = argv.filter((arg) => !arg.startsWith("-"));
   const opt = (name: string): string | undefined => flags.get(name);
 
   return {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Regenerates `sdk/src/config/addresses.ts` from `deployments/v1/*.json`.
  *

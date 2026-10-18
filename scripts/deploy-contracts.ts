@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * One-command Soroban deployment for Opaque Stellar.
  *

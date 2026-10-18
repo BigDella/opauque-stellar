@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Drift detection: compare on-chain WASM hashes against deployment manifest entries.
  *

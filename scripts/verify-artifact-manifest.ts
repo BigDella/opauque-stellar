@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Verify local artifacts against artifacts/manifest.json.
  *

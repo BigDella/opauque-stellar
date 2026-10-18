@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Prepare frontend runtime artifacts: build scanner WASM, fetch circuit assets, verify hashes.
  * Set SKIP_FRONTEND_PREBUILD=1 when CI already built/downloaded artifacts.

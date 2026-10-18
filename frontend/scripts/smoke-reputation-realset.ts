@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Phase 3 end-to-end: a real (non-tree-of-zeros) reputation set.
  *
