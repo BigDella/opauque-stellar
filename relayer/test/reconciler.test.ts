@@ -123,20 +123,42 @@ describe("PayoutReconciler.reconcile() — clean run", () => {
     expect(report.discrepancies).toHaveLength(0);
   });
 
-  it("accepts slashed and canceled as clean terminal statuses", async () => {
+  it("flags slashed on-chain status as discrepancy for a submitted job", async () => {
     const ledger = new JobLedger();
     ledger.record(makeEntry({ jobId: "0xslash", expectedFee: 10n }));
-    ledger.record(makeEntry({ jobId: "0xcancel", expectedFee: 10n }));
 
     const jobs = new Map<string, OnChainJob>([
       ["0xslash", makeJob({ fee: 10n, status: "slashed" })],
+    ]);
+    const rec = new PayoutReconciler({ chain: new StubChain(jobs), ledger });
+
+    const report = await rec.reconcile();
+    expect(report.cleanCount).toBe(0);
+    expect(report.discrepancyCount).toBe(1);
+    expect(report.summary).toBe("discrepancies_found");
+    const d = report.discrepancies[0];
+    expect(d.outcome).toBe("discrepancy");
+    expect(d.onChainStatus).toBe("slashed");
+    expect(d.detail).toMatch(/unexpected status/);
+  });
+
+  it("flags canceled on-chain status as discrepancy for a submitted job", async () => {
+    const ledger = new JobLedger();
+    ledger.record(makeEntry({ jobId: "0xcancel", expectedFee: 10n }));
+
+    const jobs = new Map<string, OnChainJob>([
       ["0xcancel", makeJob({ fee: 10n, status: "canceled" })],
     ]);
     const rec = new PayoutReconciler({ chain: new StubChain(jobs), ledger });
 
     const report = await rec.reconcile();
-    expect(report.cleanCount).toBe(2);
-    expect(report.discrepancies).toHaveLength(0);
+    expect(report.cleanCount).toBe(0);
+    expect(report.discrepancyCount).toBe(1);
+    expect(report.summary).toBe("discrepancies_found");
+    const d = report.discrepancies[0];
+    expect(d.outcome).toBe("discrepancy");
+    expect(d.onChainStatus).toBe("canceled");
+    expect(d.detail).toMatch(/unexpected status/);
   });
 
   it("records coveredRange from entry submittedAt timestamps", async () => {
