@@ -42,6 +42,41 @@ describe("config resolution", () => {
     expect(() => resolveConfig({ network: "regtest" })).toThrow(ConfigError);
   });
 
+  const fullContracts = {
+    stealthRegistry: "C1",
+    stealthAnnouncer: "C2",
+    groth16Verifier: "C3",
+    reputationVerifier: "C4",
+    schemaRegistry: "C5",
+    attestationEngineV2: "C6",
+    poolVerifier: "C7",
+    privacyPool: "C8",
+    relayerRegistry: "C9",
+  };
+
+  it("rejects a custom network without explicit pool wiring", () => {
+    expect(() =>
+      resolveConfig({
+        network: "mainnet",
+        rpcUrls: ["https://mainnet.example.com/rpc"],
+        horizonUrls: ["https://horizon.example.com"],
+        contracts: fullContracts,
+      }),
+    ).toThrow(/pool\.scope, pool\.nativeSac/);
+  });
+
+  it("uses explicit pool wiring on a custom network", () => {
+    const c = resolveConfig({
+      network: "mainnet",
+      rpcUrls: ["https://mainnet.example.com/rpc"],
+      horizonUrls: ["https://horizon.example.com"],
+      contracts: fullContracts,
+      pool: { scope: 7, nativeSac: "CSAC" },
+    });
+    expect(c.pool).toEqual({ scope: 7, nativeSac: "CSAC" });
+    expect(c.pool.nativeSac).not.toBe(c.contracts.privacyPool);
+  });
+
   it("accepts mainnet when providers and contracts are supplied", () => {
     const full = {
       stealthRegistry: "C1",
@@ -59,6 +94,7 @@ describe("config resolution", () => {
       rpcUrls: ["https://mainnet.example.com/rpc"],
       horizonUrls: ["https://horizon.example.com"],
       contracts: full,
+      pool: { scope: 1, nativeSac: "CSAC" },
     });
     expect(c.contracts).toEqual(full);
     expect(c.passphrase).toContain("Public Global Stellar Network");

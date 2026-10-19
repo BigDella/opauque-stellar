@@ -17,10 +17,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { pass=$((pass + 1)); echo "ok - $*"; }
 
 REPO="$T/repo"
-mkdir -p "$REPO/asp/data/state" "$REPO/publisher/data/inbox" "$T/relayer"
+mkdir -p "$REPO/asp/data/state" "$REPO/publisher/data/inbox" "$REPO/.opaque-relayer"
 echo '{"cursor":1}' > "$REPO/asp/data/state/pool.json"
 echo '{"leaf":"0x01"}' > "$REPO/publisher/data/inbox/a.json"
-echo '{"bids":[]}' > "$T/relayer/hub.json"
+echo '{"jobs":[]}' > "$REPO/.opaque-relayer/accepted-jobs.json"
 echo "test-passphrase" > "$T/pass"
 chmod 600 "$T/pass"
 
@@ -35,12 +35,12 @@ out=$("$BACKUP" --dry-run)
 grep -q "would back up asp" <<<"$out" || fail "dry-run did not report asp"
 ok "dry-run makes no changes"
 
-# real run: asp + publisher backed up, relayer skipped (no RELAYER_DATA_DIR)
+# real run: all default service paths, including relayer, are backed up
 out=$("$BACKUP")
 [[ $(ls "$T/backups"/asp-*.tar.gz.gpg | wc -l) -eq 1 ]] || fail "asp backup missing"
 [[ $(ls "$T/backups"/publisher-*.tar.gz.gpg | wc -l) -eq 1 ]] || fail "publisher backup missing"
-grep -q "SKIP: relayer" <<<"$out" || fail "relayer should be skipped when RELAYER_DATA_DIR unset"
-ok "backs up asp and publisher, skips unconfigured relayer"
+[[ $(ls "$T/backups"/relayer-*.tar.gz.gpg | wc -l) -eq 1 ]] || fail "relayer backup missing"
+ok "backs up default asp, publisher, and relayer state"
 
 # archive is encrypted, and round-trips with the passphrase
 f=$(ls "$T/backups"/publisher-*.tar.gz.gpg)
@@ -49,13 +49,20 @@ gpg --batch --pinentry-mode loopback --passphrase-file "$T/pass" --decrypt "$f" 
   | tar -xzO data/inbox/a.json | grep -q 0x01 || fail "restore round-trip failed"
 ok "backup is encrypted and restores"
 
-# verify passes, then relayer is included when configured
+# verify passes, including the default relayer path
 "$VERIFY" | grep -q "all services OK" || fail "verify should pass"
 sleep 1 # distinct timestamp for the next backup set
 export RELAYER_DATA_DIR="$T/relayer"
+mkdir -p "$RELAYER_DATA_DIR"
+echo '{"bids":[]}' > "$RELAYER_DATA_DIR/hub.json"
 "$BACKUP" > /dev/null
 "$VERIFY" | grep -q "OK: relayer" || fail "verify should cover relayer"
 ok "verify passes for all configured services"
+
+# verifier alerts on stale archives
+touch -d '2 days ago' "$T/backups"/relayer-*.tar.gz.gpg
+if "$VERIFY" > /dev/null 2>&1; then fail "verify should fail on stale backup"; fi
+ok "verify fails on stale backup"
 
 # verify detects corruption
 latest=$(ls "$T/backups"/asp-*.tar.gz.gpg | sort | tail -1)

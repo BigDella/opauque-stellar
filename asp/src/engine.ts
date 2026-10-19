@@ -15,7 +15,7 @@ import { computeDatasetHash, writeManifest } from "./publish.ts";
 import { PublicationMonitor } from "./monitor.ts";
 import { ReorgGuard } from "./reorg-guard.ts";
 import type { Store } from "./store.ts";
-import type { ChainAdapter, Policy, PoolState, PolicyDecisionRecord } from "./types.ts";
+import type { ChainAdapter, Deposit, Policy, PoolState, PolicyDecisionRecord } from "./types.ts";
 import { PolicyEngine } from "./policy-engine.ts";
 
 export interface TickConfig {
@@ -26,7 +26,11 @@ export interface TickConfig {
   policy: Policy;
   /** If set, the manifest JSON is written under this directory. */
   dataDir?: string;
-  /** Confirmations to wait before treating a deposit as final (cursor lag). */
+  /**
+   * Confirmations to wait before treating a deposit as final. A deposit in ledger L
+   * has `latest - L + 1` confirmations; deposits below this depth are left for a
+   * later tick (neither screened nor advancing the cursor). 0 or 1 = process at once.
+   */
   confirmations?: number;
   /** Clock injection for deterministic tests. */
   now?: () => string;
@@ -60,6 +64,20 @@ function initState(poolId: string, scope: number): PoolState {
   return { poolId, scope, approvedIndices: [], rejectedIndices: [], deferredIndices: [], decisions: [], lastIndex: -1, lastLedger: 0 };
 }
 
+/**
+ * Drop deposits that have not yet reached `confirmations` depth. Deposit ledgers are
+ * monotonic in index, so only a tail is ever dropped and the cursor stays consistent.
+ */
+export async function confirmedDeposits(
+  adapter: ChainAdapter,
+  deposits: Deposit[],
+  confirmations: number,
+): Promise<Deposit[]> {
+  if (confirmations <= 1 || deposits.length === 0) return deposits;
+  const maxFinalLedger = (await adapter.latestLedger()) - confirmations + 1;
+  return deposits.filter((d) => d.ledger <= maxFinalLedger);
+}
+
 export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
   const now = cfg.now ?? (() => new Date().toISOString());
   const state = cfg.store.load(cfg.poolId) ?? initState(cfg.poolId, cfg.scope);
@@ -69,7 +87,11 @@ export async function runPoolTick(cfg: TickConfig): Promise<TickResult> {
 
   // 1. Read finalized deposits and screen any index without a terminal decision.
   const readAfterIndex = state.deferredIndices.length > 0 ? -1 : state.lastIndex;
-  const deposits = await cfg.adapter.readDeposits(readAfterIndex, state.lastLedger);
+  const deposits = await confirmedDeposits(
+    cfg.adapter,
+    await cfg.adapter.readDeposits(readAfterIndex, state.lastLedger),
+    cfg.confirmations ?? 0,
+  );
   let newlyApproved = 0;
   let newlyRejected = 0;
   const approved = new Set(state.approvedIndices);

@@ -104,7 +104,7 @@ is used.
 | `STELLAR_RPC_URL` | testnet RPC | Soroban RPC endpoint |
 | `ASP_SECRET` | — (required) | ASP authority `S…` seed (the pool admin in the demo) |
 | `ASP_INTERVAL_MS` | `15000` | loop interval |
-| `ASP_CONFIRMATIONS` | `1` | confirmations before a deposit is treated as final |
+| `ASP_CONFIRMATIONS` | `1` | confirmations before a deposit is treated as final; deposits in the newest `N-1` ledgers wait for a later tick (`0`/`1` = process immediately) |
 | `ASP_MAX_ROOT_AGE_MS` | `120000` | max age of the last published root before `PublicationMonitor` alerts / `/health` reports unhealthy |
 | `ASP_HTTP_HOST` | `127.0.0.1` | `npm run serve` bind host |
 | `ASP_HTTP_PORT` | `8791` | `npm run serve` bind port |

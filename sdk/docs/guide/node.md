@@ -45,12 +45,16 @@ The resolver looks for `circuits/v2/stealth_reputation.wasm` and
 
 ## Clean process exit
 
-`snarkjs` keeps worker threads alive after proving, so a short-lived Node script
-won't exit on its own. Call `process.exit(0)` when your work is done:
+`snarkjs` keeps worker threads alive after proving. Call `opaque.dispose()`
+when your work is done to terminate them and release resources; the script then
+ends naturally, which also works inside servers and test runners:
 
 ```ts
-await opaque.reputation.verifyOnChain(proof);
-process.exit(0);
+try {
+  await opaque.reputation.verifyOnChain(proof);
+} finally {
+  await opaque.dispose();
+}
 ```
 
 ## Runnable example

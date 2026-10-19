@@ -69,5 +69,5 @@ if (circuitsDir) {
   console.log("(set OPAQUE_CIRCUITS_DIR to also generate a real ZK proof)");
 }
 
-// snarkjs keeps worker threads alive, so exit explicitly once done.
-process.exit(0);
+// Release snarkjs proving workers so the script ends naturally.
+await opaque.dispose();

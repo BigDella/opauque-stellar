@@ -8,6 +8,7 @@ export * from "./read-source";
 export * from "./schemas";
 export * from "./payments";
 export * from "./reputation";
+export * from "./publisher";
 export * from "./pool";
 export * from "./pool-validation";
 export * from "./relayer";

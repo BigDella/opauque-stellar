@@ -1,160 +1,55 @@
 #!/usr/bin/env -S npx tsx
-/**
- * Independent root verifier tool (#627)
- * Recomputes merkle roots from on-chain data and compares against published values.
- * Allows users to verify without trusting our indexer.
- *
- * Usage: npx tsx scripts/verify-merkle-root.ts --network testnet --root 0x... [--dataset-hash 0x...]
- */
+/** Verify reputation roots by reading the verifier's Soroban ledger entries. */
+import { existsSync, readFileSync } from "node:fs";
+import { Contract, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { Server } from "@stellar/stellar-sdk";
-import * as fs from "fs";
-
-const USAGE = `
-Usage: npx tsx scripts/verify-merkle-root.ts [options]
-
-Options:
-  --network NETWORK       Network (testnet|mainnet). Default: testnet
-  --root HASH            Root hash to verify (hex string)
-  --dataset-hash HASH    Expected dataset hash (hex string, optional)
-  --contract CONTRACT    Reputation verifier contract ID (optional)
-  --all                  Verify all published roots
-
-Examples:
-  npx tsx scripts/verify-merkle-root.ts --network testnet --root 0xaa...
-  npx tsx scripts/verify-merkle-root.ts --network testnet --all
-`;
-
-interface RootEntry {
-  root: string;
-  ledger: number;
-  dataset_hash: string;
+type Manifest = { rpcUrl?: string; contracts: { reputationVerifier?: { id: string | null } } };
+type RootEntry = { root: string; ledger: number; datasetHash: string };
+const argument = (name: string): string | undefined => { const index = process.argv.indexOf(name); return index === -1 ? undefined : process.argv[index + 1]; };
+function requireRoot(value: string): string { if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error("Root must be 0x followed by 64 hexadecimal characters"); return value.toLowerCase(); }
+function contractDataKey(contractId: string, key: xdr.ScVal): xdr.LedgerKey {
+  return xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({ contract: new Contract(contractId).address().toScAddress(), key, durability: xdr.ContractDataDurability.persistent() }));
+}
+function bytes(value: xdr.ScVal): string { return `0x${Buffer.from(value.bytes()).toString("hex")}`; }
+function historyFromEntry(entry: xdr.LedgerEntryData): string[] {
+  const values = entry.contractData().val().vec();
+  if (!values) throw new Error("root_history is not a vector");
+  return values.toArray().map(bytes);
+}
+function rootEntryFromLedger(entry: xdr.LedgerEntryData): RootEntry {
+  const map = entry.contractData().val().map();
+  if (!map) throw new Error("merkle root entry is not a map");
+  const fields = new Map(map.toArray().map((field) => [field.key().sym().toString(), field.val()]));
+  const root = fields.get("root"), ledger = fields.get("ledger"), datasetHash = fields.get("dataset_hash");
+  if (!root || !ledger || !datasetHash) throw new Error("merkle root entry is missing required fields");
+  return { root: bytes(root), ledger: ledger.u32(), datasetHash: bytes(datasetHash) };
 }
 
-async function getRpcUrl(network: string): Promise<string> {
-  const networks: { [key: string]: string } = {
-    testnet: "https://rpc-futurenet.stellar.org",
-    mainnet: "https://soroban-mainnet.stellar.org",
-  };
-  return networks[network] || networks.testnet;
+async function main(): Promise<void> {
+  const network = argument("--network") ?? "testnet";
+  const manifestPath = `deployments/v1/${network}.json`;
+  if (!existsSync(manifestPath)) throw new Error(`Deployment manifest not found: ${manifestPath}`);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest;
+  const contractId = argument("--contract") ?? manifest.contracts.reputationVerifier?.id;
+  if (!contractId) throw new Error("No reputation verifier contract is deployed; use --contract to override");
+  if (!manifest.rpcUrl) throw new Error(`Deployment manifest for ${network} has no rpcUrl`);
+  const requestedRoot = argument("--root"), verifyAll = process.argv.includes("--all");
+  if ((requestedRoot ? 1 : 0) + (verifyAll ? 1 : 0) !== 1) throw new Error("Specify exactly one of --root or --all");
+  const server = new rpc.Server(manifest.rpcUrl);
+  const historyResponse = await server.getLedgerEntries(contractDataKey(contractId, xdr.ScVal.scvSymbol("root_history")));
+  if (historyResponse.entries.length !== 1) throw new Error("Unable to read the on-chain root history");
+  const roots = historyFromEntry(historyResponse.entries[0].val);
+  const targets = requestedRoot ? [requireRoot(requestedRoot)] : roots;
+  if (targets.length === 0) throw new Error("No published roots exist on-chain");
+  const entries = await server.getLedgerEntries(...targets.map((root) => contractDataKey(contractId, xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("merkle_root"), xdr.ScVal.scvBytes(Buffer.from(root.slice(2), "hex"))]))));
+  if (entries.entries.length !== targets.length) throw new Error("One or more requested root entries are missing on-chain");
+  const expectedDatasetHash = argument("--dataset-hash")?.toLowerCase();
+  for (const entry of entries.entries) {
+    const rootEntry = rootEntryFromLedger(entry.val);
+    if (!targets.includes(rootEntry.root)) throw new Error(`On-chain entry contains unexpected root ${rootEntry.root}`);
+    if (expectedDatasetHash && rootEntry.datasetHash !== expectedDatasetHash) throw new Error("On-chain dataset hash does not match --dataset-hash");
+    console.log(`OK: ${rootEntry.root} (ledger ${rootEntry.ledger}, dataset ${rootEntry.datasetHash})`);
+  }
+  console.log(`PASS: verified ${entries.entries.length} root(s) against ${network} RPC ${manifest.rpcUrl}`);
 }
-
-async function fetchRootEntries(
-  contractId: string,
-  rpcUrl: string,
-): Promise<RootEntry[]> {
-  const server = new Server(rpcUrl);
-  const entries: RootEntry[] = [];
-
-  try {
-    const ledgerEntries = await server.getLedgerEntries(contractId);
-    if (!ledgerEntries || !ledgerEntries.records) return entries;
-
-    for (const record of ledgerEntries.records) {
-      const data = record.val as any;
-      if (!data) continue;
-
-      const root = data.root || "";
-      const ledger = data.ledger || 0;
-      const datasetHash = data.dataset_hash || "";
-
-      entries.push({ root, ledger, dataset_hash: datasetHash });
-    }
-  } catch (err) {
-    console.error("Failed to fetch root entries:", err);
-  }
-
-  return entries;
-}
-
-function verifyRootFormat(root: string): boolean {
-  if (!root.startsWith("0x")) return false;
-  if (!/^0x[a-fA-F0-9]{64}$/.test(root)) return false;
-  return true;
-}
-
-async function main() {
-  const args = process.argv.slice(2);
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
-    console.log(USAGE);
-    return;
-  }
-
-  const network = args.includes("--network")
-    ? args[args.indexOf("--network") + 1]
-    : "testnet";
-  const targetRoot = args.includes("--root")
-    ? args[args.indexOf("--root") + 1]
-    : null;
-  const expectedDatasetHash = args.includes("--dataset-hash")
-    ? args[args.indexOf("--dataset-hash") + 1]
-    : null;
-  const verifyAll = args.includes("--all");
-
-  let contractId =
-    args.includes("--contract") &&
-    args[args.indexOf("--contract") + 1];
-
-  if (!contractId) {
-    const deploymentFile = `deployments/v1/${network}.json`;
-    if (fs.existsSync(deploymentFile)) {
-      const deployments = JSON.parse(fs.readFileSync(deploymentFile, "utf-8"));
-      contractId = deployments.reputation_verifier;
-    }
-  }
-
-  if (!contractId) {
-    console.error("Error: No contract ID found. Specify with --contract.");
-    process.exit(1);
-  }
-
-  const rpcUrl = await getRpcUrl(network);
-  console.log(`Verifying on ${network} (${rpcUrl})`);
-  console.log(`Contract: ${contractId}\n`);
-
-  try {
-    if (verifyAll) {
-      const entries = await fetchRootEntries(contractId, rpcUrl);
-      console.log(`Found ${entries.length} published roots\n`);
-
-      for (const entry of entries) {
-        console.log(`Root:        ${entry.root}`);
-        console.log(`Ledger:      ${entry.ledger}`);
-        console.log(`Dataset:     ${entry.dataset_hash}`);
-        console.log("Status:      ✓ Published on-chain");
-        console.log();
-      }
-    } else if (targetRoot) {
-      if (!verifyRootFormat(targetRoot)) {
-        console.error(
-          'Error: Root must be hex format "0x" + 64 hex chars',
-        );
-        process.exit(1);
-      }
-
-      console.log(`Verifying root: ${targetRoot}`);
-      if (expectedDatasetHash) {
-        console.log(`Expected dataset: ${expectedDatasetHash}`);
-      }
-      console.log(
-        "\nNote: Independent verification requires accessing raw chain data.",
-      );
-      console.log(
-        "For now, this tool confirms the root is known to the contract.",
-      );
-      console.log("\n✓ Root format valid");
-      console.log(
-        "✓ Use contract.getRootEntry() to fetch full metadata on-chain",
-      );
-    } else {
-      console.error("Error: Specify --root or --all");
-      console.log(USAGE);
-      process.exit(1);
-    }
-  } catch (err) {
-    console.error("Error:", err instanceof Error ? err.message : err);
-    process.exit(1);
-  }
-}
-
-main().catch(console.error);
+main().catch((error: unknown) => { console.error(error instanceof Error ? `FAIL: ${error.message}` : error); process.exitCode = 1; });

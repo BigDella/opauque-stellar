@@ -15,9 +15,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
   # ── Change detection ────────────────────────────────────────────────
   # One cheap job computes which areas a change touches. Path-scoped jobs
@@ -45,11 +42,11 @@ jobs:
       backup-scripts: ${{ steps.filter.outputs.backup-scripts }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
         with:
           filters: |
             circuits:
@@ -110,6 +107,8 @@ jobs:
   frontend:
     name: Frontend (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -117,10 +116,10 @@ jobs:
         node-version: ["20", "22"]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -145,6 +144,8 @@ jobs:
   contracts:
     name: Contracts (Rust ${{ matrix.rust-toolchain }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -152,16 +153,16 @@ jobs:
         rust-toolchain: [stable]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust ${{ matrix.rust-toolchain }}
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ matrix.rust-toolchain }}
           components: rustfmt, clippy
 
       - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -182,16 +183,18 @@ jobs:
   circuits:
     name: Circuits regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 20
     steps:
       - name: Checkout code
         if: needs.changes.outputs.circuits == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js 20
         if: needs.changes.outputs.circuits == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -213,29 +216,31 @@ jobs:
   scanner:
     name: Scanner WASM (Rust stable + Node 20)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     steps:
       - name: Checkout code
         if: needs.changes.outputs.scanner-wasm == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust stable (pinned via scanner/rust-toolchain.toml)
         if: needs.changes.outputs.scanner-wasm == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js 20
         if: needs.changes.outputs.scanner-wasm == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
 
       - name: Cache cargo registry and build artifacts
         if: needs.changes.outputs.scanner-wasm == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -266,22 +271,24 @@ jobs:
   scanner-crate:
     name: Scanner crate (Rust stable)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     steps:
       - name: Checkout code
         if: needs.changes.outputs.scanner-crate == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust stable
         if: needs.changes.outputs.scanner-crate == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo registry and build artifacts
         if: needs.changes.outputs.scanner-crate == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -311,22 +318,24 @@ jobs:
   scanner-benchmark-gate:
     name: Scanner WASM benchmark regression gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     steps:
       - name: Checkout code
         if: needs.changes.outputs.scanner-bench == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust stable
         if: needs.changes.outputs.scanner-bench == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js 20
         if: needs.changes.outputs.scanner-bench == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -334,7 +343,7 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         if: needs.changes.outputs.scanner-bench == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -366,20 +375,22 @@ jobs:
   poseidon-crates:
     name: Poseidon crates (Rust stable)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     steps:
       - name: Checkout code
         if: needs.changes.outputs.poseidon == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust stable
         if: needs.changes.outputs.poseidon == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
 
       - name: Cache cargo registry and build artifacts
         if: needs.changes.outputs.poseidon == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -422,16 +433,18 @@ jobs:
   sdk:
     name: SDK (Node 20)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 20
     steps:
       - name: Checkout code
         if: needs.changes.outputs.sdk == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js 20
         if: needs.changes.outputs.sdk == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -477,10 +490,12 @@ jobs:
   workflow-lint:
     name: Workflow script lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 5
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Validate workflow scripts
         run: ./scripts/validate-workflow-scripts.sh
@@ -489,6 +504,8 @@ jobs:
   service-images:
     name: Build ${{ matrix.service }} image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     strategy:
@@ -498,15 +515,15 @@ jobs:
     steps:
       - name: Checkout code
         if: needs.changes.outputs.service-images == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
         if: needs.changes.outputs.service-images == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build ${{ matrix.service }} image
         if: needs.changes.outputs.service-images == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.service }}/Dockerfile
@@ -536,12 +553,14 @@ jobs:
   supply-chain:
     name: Supply chain audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 30
     steps:
       - name: Checkout code
         if: needs.changes.outputs.supply-chain == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install cargo-audit and cargo-deny (pinned, prebuilt)
         if: needs.changes.outputs.supply-chain == 'true'
@@ -557,7 +576,7 @@ jobs:
 
       - name: Setup Node.js 20
         if: needs.changes.outputs.supply-chain == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
@@ -583,12 +602,14 @@ jobs:
   backup-scripts:
     name: Backup scripts
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: changes
     timeout-minutes: 10
     steps:
       - name: Checkout code
         if: needs.changes.outputs.backup-scripts == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test opaque-backup and opaque-verify-backup
         if: needs.changes.outputs.backup-scripts == 'true'
