@@ -47,7 +47,6 @@ async function main() {
     scope: cfg.scope,
     authority: cfg.authority,
     deploymentLedger: cfg.deploymentLedger,
-    confirmations: cfg.confirmations,
   });
   const store = new FileStore(cfg.dataDir);
   const monitor = createPublicationMonitor(cfg);

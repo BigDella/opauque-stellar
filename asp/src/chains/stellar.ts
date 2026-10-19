@@ -24,7 +24,6 @@ export interface StellarAdapterConfig {
   poolId: string;
   scope: number;
   authority: Keypair;
-  confirmations?: number;
   /** Ledger the pool was deployed at (preferred cold-start cursor). */
   deploymentLedger?: number;
   /** Max ledgers to look back on a cold start when deploymentLedger is unknown. */

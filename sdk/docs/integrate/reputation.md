@@ -22,6 +22,7 @@ const opaque = new OpaqueClient({
   network: "testnet",
   signer: keypairSigner(process.env.STELLAR_SECRET!),
   artifacts: urlArtifactResolver({ baseUrl: "https://your-cdn.example" }), // serves circuits/v2/*
+  reputationPublisherUrl: "https://publisher.example.com", // reputation-root publisher
 });
 ```
 
@@ -65,7 +66,31 @@ await opaque.reputation.attest({
 ```
 
 The attestation is recorded on-chain. Attestations form a Poseidon Merkle tree
-whose root an indexer publishes on the reputation-verifier (Step 4 needs that).
+whose root the reputation publisher publishes on the reputation-verifier (Step 4
+needs that).
+
+### Submit the leaf to the publisher
+
+The SDK's publisher client (`config.reputationPublisherUrl`) queues the holder's
+Merkle leaf for the next published root, then fetches its inclusion path:
+
+```ts
+// queue the leaf (pass submitToken if the publisher requires auth)
+await opaque.reputation.submitLeaf({ attestationId, stealthPrivKey, submitToken });
+
+// after the next publish tick: the real Merkle path + root for this leaf
+const path = await opaque.reputation.getInclusionPath({ attestationId, stealthPrivKey });
+// path.root, path.pathElements, path.pathIndices, path.leafIndex
+
+// lower-level access
+const publisher = opaque.reputation.publisher();
+await publisher.getRoot(await opaque.reputation.leafFor({ attestationId, stealthPrivKey }));
+```
+
+Until the leaf is covered, `getInclusionPath` throws `RootUnavailableError`;
+other publisher failures throw `PublisherError` with a `reason` of
+`unauthorized`, `rate_limited` (see `retryAfterSeconds`), `inbox_full`,
+`invalid_leaf`, `bad_response`, `network`, or `http`.
 
 ## Step 3 — Holder generates a proof
 
@@ -78,6 +103,7 @@ const proof = await opaque.reputation.prove({
   attestationId,                 // numeric trait/attestation id (must fit u64)
   stealthPrivKey,                // the holder's stealth private key (32 bytes)
   externalNullifier: 42n,        // your app context id (must fit u64)
+  usePublisher: true,            // prove against the publisher's real Merkle path
 });
 // proof.proofA/B/C, merkleRoot, attestationId, nullifierHash, externalNullifier, publicSignals
 ```
@@ -106,6 +132,7 @@ const txHash = await opaque.reputation.proveAndVerify({
   attestationId,
   stealthPrivKey,
   externalNullifier: 42n,
+  usePublisher: true,
 });
 ```
 
@@ -133,14 +160,17 @@ await issuer.reputation.attest({
   fieldDefinitions: "u64 score, bool verified", expirationLedger: 6_000_000,
 });
 
-// holder proves + verifies on-chain
+// holder submits its leaf, then proves + verifies on-chain once published
 const holder = new OpaqueClient({
   network: "testnet",
   signer: keypairSigner(HOLDER_SECRET),
   artifacts: urlArtifactResolver({ baseUrl: ARTIFACT_BASE_URL }),
+  reputationPublisherUrl: PUBLISHER_URL,
 });
+await holder.reputation.submitLeaf({ attestationId, stealthPrivKey });
+// ...after the next publish tick:
 const txHash = await holder.reputation.proveAndVerify({
-  attestationId, stealthPrivKey, externalNullifier: 42n,
+  attestationId, stealthPrivKey, externalNullifier: 42n, usePublisher: true,
 });
 ```
 
@@ -148,8 +178,11 @@ const txHash = await holder.reputation.proveAndVerify({
 
 - `NotWiredError` from `prove` → no `artifacts` resolver configured (you can still
   `verifyOnChain` a precomputed proof).
-- `RootUnavailableError` / null root → the indexer hasn't published a root
+- `RootUnavailableError` / null root → the publisher hasn't published a root
   including the attestation yet; retry.
+- `PublisherError` → publisher request failed; branch on `reason`.
+- `NotWiredError` from `publisher()` / `submitLeaf` → no
+  `reputationPublisherUrl` configured.
 - `ContractError` `#4` → nullifier replay (already proven in this context); `#2` →
   expired/stale root.
 - `attestationId` and `externalNullifier` must fit in `u64`.

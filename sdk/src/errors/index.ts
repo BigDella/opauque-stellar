@@ -106,6 +106,40 @@ export class RootUnavailableError extends OpaqueError {
   }
 }
 
+/**
+ * A reputation-publisher request failed (network, timeout, HTTP status, or a
+ * malformed response). `reason` distinguishes auth, rate limiting, a full
+ * inbox, an invalid leaf, and a leaf not yet included in the published root.
+ */
+export class PublisherError extends OpaqueError {
+  readonly httpStatus?: number;
+  readonly reason:
+    | "unauthorized"
+    | "rate_limited"
+    | "inbox_full"
+    | "invalid_leaf"
+    | "not_included"
+    | "bad_response"
+    | "network"
+    | "http";
+  /** Seconds the publisher asked the caller to wait before retrying, if any. */
+  readonly retryAfterSeconds?: number;
+  constructor(
+    message: string,
+    options: {
+      reason: PublisherError["reason"];
+      httpStatus?: number;
+      retryAfterSeconds?: number;
+      cause?: unknown;
+    },
+  ) {
+    super(message, "PUBLISHER", options);
+    this.reason = options.reason;
+    this.httpStatus = options.httpStatus;
+    this.retryAfterSeconds = options.retryAfterSeconds;
+  }
+}
+
 /** A circuit artifact failed to resolve or failed its integrity check. */
 export class ArtifactError extends OpaqueError {
   constructor(message: string, options?: { cause?: unknown }) {
