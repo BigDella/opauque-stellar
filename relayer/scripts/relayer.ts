@@ -100,6 +100,13 @@ const node = await startRelayerNode({
   log,
 });
 
+const shutdown = async () => {
+  await node.stop();
+  hub?.stop();
+};
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
+
 if (hubUrl) {
   log.info("connected to hub", { hubUrl, operator: operator.publicKey(), x25519: bytesToHex(x25519.publicKey), registryId });
 } else {

@@ -14,15 +14,14 @@
  */
 import type { SerializablePoolWithdrawPayload } from "./shared/payload.ts";
 import type { AcceptedJobStore } from "./store.ts";
-import { createLogger } from "./logger.ts";
-
-const log = createLogger("relayer");
 
 /** One accepted-but-unsubmitted job. */
 export type AcceptedJobEntry = {
   jobId: string;
-  /** Transaction hash returned by `accept_job`. */
-  acceptedTx: string;
+  /** Transaction hash returned by `accept_job`, once accepted is confirmed. */
+  acceptedTx?: string;
+  /** Whether the accept transaction has been confirmed on-chain. */
+  phase?: "accepting" | "accepted";
   /** The withdraw payload, serialized so the job can be submitted after a restart. */
   payload: SerializablePoolWithdrawPayload;
   /** Job deadline as a ledger number. */
@@ -50,14 +49,11 @@ export class AcceptedJobQueue {
   async hydrate(): Promise<void> {
     if (this.loaded || !this.store) return;
     this.loaded = true;
-    try {
-      const saved = await this.store.load();
-      if (!saved) return;
-      for (const entry of saved) {
-        this.entries.set(entry.jobId.toLowerCase(), entry);
-      }
-    } catch (err) {
-      log.error("accepted-jobs hydrate failed", { error: err });
+    const saved = await this.store.load();
+    if (!saved) return;
+    for (const entry of saved) {
+      entry.phase ??= entry.acceptedTx ? "accepted" : "accepting";
+      this.entries.set(entry.jobId.toLowerCase(), entry);
     }
   }
 
@@ -66,7 +62,16 @@ export class AcceptedJobQueue {
    * the submit is attempted — that ordering is the whole point of this queue.
    */
   async enqueue(entry: AcceptedJobEntry): Promise<void> {
+    entry.phase ??= entry.acceptedTx ? "accepted" : "accepting";
     this.entries.set(entry.jobId.toLowerCase(), entry);
+    await this.persist();
+  }
+
+  async markAccepted(jobId: string, acceptedTx: string): Promise<void> {
+    const entry = this.entries.get(jobId.toLowerCase());
+    if (!entry) throw new Error(`accepted job intent missing: ${jobId}`);
+    entry.acceptedTx = acceptedTx;
+    entry.phase = "accepted";
     await this.persist();
   }
 
@@ -100,10 +105,6 @@ export class AcceptedJobQueue {
 
   private async persist(): Promise<void> {
     if (!this.store) return;
-    try {
-      await this.store.save(this.pending());
-    } catch (err) {
-      log.error("accepted-jobs persist failed", { error: err });
-    }
+    await this.store.save(this.pending());
   }
 }

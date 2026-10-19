@@ -2,8 +2,8 @@
  * Durable per-pool ASP state. `FileStore` persists JSON under a data directory;
  * `MemoryStore` is for tests. State is small (indices + cursors), so JSON is plenty.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { readJson, writeAtomic } from "../../shared/atomic-file.ts";
 import type { PoolState } from "./types.ts";
 
 export interface Store {
@@ -20,14 +20,12 @@ export class FileStore implements Store {
 
   load(poolId: string): PoolState | null {
     const p = this.path(poolId);
-    if (!existsSync(p)) return null;
-    return JSON.parse(readFileSync(p, "utf8")) as PoolState;
+    return readJson<PoolState>(p);
   }
 
   save(state: PoolState): void {
     const p = this.path(state.poolId);
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, `${JSON.stringify(state, null, 2)}\n`);
+    writeAtomic(p, `${JSON.stringify(state, null, 2)}\n`);
   }
 }
 

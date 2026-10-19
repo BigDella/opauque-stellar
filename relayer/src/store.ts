@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { readJson, writeAtomic } from "../../shared/atomic-file.ts";
 import type { RelayerBid } from "./messages.ts";
 import type { RelayerHubStats } from "./hub.ts";
 import type { JobLedgerEntry } from "./reconciler.ts";
@@ -12,11 +13,11 @@ import type { AcceptedJobEntry } from "./job-queue.ts";
 type OutcomeEntry = { result: "completed" | "failed"; at: number };
 
 export type HubState = {
-  bids: [string, RelayerBid[]][];
-  outcomes: [string, OutcomeEntry[]][];
+  bids: ReadonlyArray<readonly [string, ReadonlyArray<RelayerBid>]>;
+  outcomes: ReadonlyArray<readonly [string, ReadonlyArray<OutcomeEntry>]>;
   knownOperators: string[];
-  lastHeartbeatAt: [string, number][];
-  assignments: [string, string][];
+  lastHeartbeatAt: ReadonlyArray<readonly [string, number]>;
+  assignments: ReadonlyArray<readonly [string, string | { operator: string; addedAt: number }]>;
   stats: RelayerHubStats;
 };
 
@@ -137,23 +138,12 @@ const LEDGER_FILE = "ledger.json";
 const ACCEPTED_JOBS_FILE = "accepted-jobs.json";
 const STATE_VERSION = 1;
 
-function ensureDir(filePath: string): void {
-  const dir = dirname(filePath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
-
 function readJsonFile<T>(filePath: string): T | null {
-  try {
-    if (!existsSync(filePath)) return null;
-    return JSON.parse(readFileSync(filePath, "utf8")) as T;
-  } catch {
-    return null;
-  }
+  return readJson<T>(filePath);
 }
 
-function writeJsonFile(filePath: string, data: unknown): void {
-  ensureDir(filePath);
-  writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+function writeJsonFile(filePath: string, data: unknown, replacer?: (key: string, value: unknown) => unknown): void {
+  writeAtomic(filePath, JSON.stringify(data, replacer, 2) + "\n");
 }
 
 function serialiseBigInt(_key: string, value: unknown): unknown {

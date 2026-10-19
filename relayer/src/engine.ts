@@ -25,6 +25,7 @@ export type OnChainJob = {
   fee: bigint;
   deadline: number;
   payloadHash: string;
+  acceptedRelayer?: string | null;
 };
 
 export type OnChainRelayer = {
@@ -81,6 +82,8 @@ export interface RelayerEngineConfig {
   acceptedJobs?: AcceptedJobQueue;
   /** Submit retry policy (#975). Defaults to {@link DEFAULT_SUBMIT_RETRY}. */
   submitRetry?: SubmitRetryPolicy;
+  /** Maximum job lifetime in ledgers, used to bound bid retention. */
+  maxJobLifetimeLedgers?: number;
 }
 
 export type SubmitRetryPolicy = {
@@ -123,8 +126,10 @@ type IdempotencyEntry = {
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Expiry time for old bids (90 days). */
-const BID_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000;
+/** Stellar closes a ledger approximately every five seconds. */
+const LEDGER_INTERVAL_MS = 5_000;
+/** Safety margin beyond the maximum contract job lifetime. */
+const BID_EXPIRY_GRACE_MS = 60 * 60 * 1000;
 
 /**
  * Default deadline headroom required before bidding (#974). `accept_job` and
@@ -157,6 +162,9 @@ export class RelayerEngine {
   private startedAt: number;
   private readonly deadlineMarginLedgers: number;
   private readonly submitRetry: SubmitRetryPolicy;
+  private readonly bidExpiryMs: number;
+  private resumeTimer: ReturnType<typeof setInterval> | null = null;
+  private resumeInFlight: Promise<unknown> | null = null;
 
   constructor(private cfg: RelayerEngineConfig) {
     this.startedAt = Date.now();
@@ -167,6 +175,8 @@ export class RelayerEngine {
       maxAttempts: Number.isInteger(retry.maxAttempts) && retry.maxAttempts > 0 ? retry.maxAttempts : DEFAULT_SUBMIT_RETRY.maxAttempts,
       baseDelayMs: Number.isFinite(retry.baseDelayMs) && retry.baseDelayMs >= 0 ? retry.baseDelayMs : DEFAULT_SUBMIT_RETRY.baseDelayMs,
     };
+    const maxLifetime = cfg.maxJobLifetimeLedgers ?? 17_280;
+    this.bidExpiryMs = Math.max(LEDGER_INTERVAL_MS, maxLifetime * LEDGER_INTERVAL_MS + BID_EXPIRY_GRACE_MS);
   }
 
   bidsFor(jobId: string): RelayerBid[] {
@@ -294,22 +304,30 @@ export class RelayerEngine {
           throw new Error("Payload hash mismatch.");
         }
         await this.cfg.chain.simulatePoolWithdraw(payload);
-        const acceptedTx = await this.cfg.chain.acceptJob(payloadMsg.jobId);
-        acceptedJob = true;
-        this.stats.accepted += 1;
-
-        // Durably record the acceptance *before* submitting (#975): from here the
-        // job is bonded to this operator, so a crash before the submit lands must
-        // be recoverable rather than a guaranteed slash.
+        // Persist the intent before sending accept_job. A timeout can mean that
+        // Stellar accepted the transaction even though the RPC did not confirm it.
         await this.cfg.acceptedJobs?.enqueue({
           jobId: payloadMsg.jobId,
-          acceptedTx,
           payload: serializePoolWithdrawPayload(payload),
           deadline: job.deadline,
           fee: job.fee.toString(),
           acceptedAt: Date.now(),
           attempts: 0,
         });
+
+        let acceptedTx: string;
+        try {
+          acceptedTx = await this.cfg.chain.acceptJob(payloadMsg.jobId);
+        } catch (err) {
+          // Re-read immediately: the accept may have landed after the adapter
+          // timed out. Keep the intent queued if it is still open.
+          const reconciled = await this.reconcileAcceptance(payloadMsg.jobId);
+          if (!reconciled) throw err;
+          acceptedTx = reconciled;
+        }
+        await this.cfg.acceptedJobs?.markAccepted(payloadMsg.jobId, acceptedTx);
+        acceptedJob = true;
+        this.stats.accepted += 1;
 
         const submittedTx = await this.submitWithRetry(payloadMsg.jobId, payload, job.deadline);
         this.stats.submitted += 1;
@@ -374,10 +392,14 @@ export class RelayerEngine {
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.submitRetry.maxAttempts; attempt += 1) {
       try {
+        const current = await this.cfg.chain.getJob(jobId);
+        if (current?.status === "submitted") return `on-chain:${jobId}`;
         return await this.cfg.chain.submitPoolWithdraw(jobId, payload);
       } catch (err) {
         lastError = err;
         await this.cfg.acceptedJobs?.recordFailure(jobId, err instanceof Error ? err.message : String(err));
+        const current = await this.cfg.chain.getJob(jobId).catch(() => null);
+        if (current?.status === "submitted") return `on-chain:${jobId}`;
         if (attempt >= this.submitRetry.maxAttempts) break;
         if (!(await this.hasDeadlineHeadroom(deadline))) break;
         const jitterMs = Math.random() * this.submitRetry.baseDelayMs;
@@ -385,6 +407,13 @@ export class RelayerEngine {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private async reconcileAcceptance(jobId: string): Promise<string | null> {
+    const current = await this.cfg.chain.getJob(jobId).catch(() => null);
+    if (!current || current.status !== "accepted") return null;
+    if (current.acceptedRelayer && current.acceptedRelayer !== this.cfg.operator.publicKey()) return null;
+    return `on-chain-accept:${jobId}`;
   }
 
   /** Whether `deadline` still clears the configured margin against the chain head. */
@@ -416,6 +445,39 @@ export class RelayerEngine {
 
     await queue.hydrate();
     for (const entry of queue.pending()) {
+      const current = await this.cfg.chain.getJob(entry.jobId).catch(() => null);
+      if (current?.status === "submitted") {
+        await queue.resolve(entry.jobId);
+        this.cfg.jobLedger?.record({
+          jobId: entry.jobId,
+          acceptedTx: entry.acceptedTx ?? `on-chain-accept:${entry.jobId}`,
+          submittedTx: `on-chain:${entry.jobId}`,
+          expectedFee: BigInt(entry.fee),
+          submittedAt: Date.now(),
+        });
+        await this.notifySettled(entry.jobId, "completed");
+        submitted.push(entry.jobId);
+        continue;
+      }
+      if (entry.phase === "accepting" || !entry.acceptedTx) {
+        if (current?.status === "accepted" && (!current.acceptedRelayer || current.acceptedRelayer === this.cfg.operator.publicKey())) {
+          await queue.markAccepted(entry.jobId, `on-chain-accept:${entry.jobId}`);
+        } else if (current?.status === "open") {
+          try {
+            const acceptedTx = await this.cfg.chain.acceptJob(entry.jobId);
+            await queue.markAccepted(entry.jobId, acceptedTx);
+          } catch (err) {
+            await queue.recordFailure(entry.jobId, err instanceof Error ? err.message : String(err));
+            failed.push(entry.jobId);
+            continue;
+          }
+        } else {
+          await queue.resolve(entry.jobId);
+          abandoned.push(entry.jobId);
+          continue;
+        }
+        entry.acceptedTx = queue.get(entry.jobId)?.acceptedTx;
+      }
       if (!(await this.hasDeadlineHeadroom(entry.deadline))) {
         await queue.resolve(entry.jobId);
         abandoned.push(entry.jobId);
@@ -429,7 +491,7 @@ export class RelayerEngine {
         await queue.resolve(entry.jobId);
         this.cfg.jobLedger?.record({
           jobId: entry.jobId,
-          acceptedTx: entry.acceptedTx,
+          acceptedTx: entry.acceptedTx ?? `on-chain-accept:${entry.jobId}`,
           submittedTx,
           expectedFee: BigInt(entry.fee),
           submittedAt: Date.now(),
@@ -466,8 +528,28 @@ export class RelayerEngine {
   }
 
   /** Prune expired entries from memory maps. Runs on a timer. Safe to call multiple times. */
-  startPruneWatch(intervalMs: number = 60 * 60 * 1000): void {    if (this.pruneTimer !== null) return;
+  startPruneWatch(intervalMs: number = 60 * 60 * 1000): void {
+    if (this.pruneTimer !== null) return;
     this.pruneTimer = setInterval(() => this.prune(), intervalMs);
+  }
+
+  startAcceptedJobWatch(intervalMs: number = 30_000): void {
+    if (this.resumeTimer !== null || !this.cfg.acceptedJobs) return;
+    this.resumeTimer = setInterval(() => {
+      if (this.resumeInFlight) return;
+      this.resumeInFlight = this.resumeAcceptedJobs().catch((err) => {
+        this.stats.lastError = err instanceof Error ? err.message : String(err);
+      }).finally(() => {
+        this.resumeInFlight = null;
+      });
+    }, intervalMs);
+  }
+
+  stopAcceptedJobWatch(): void {
+    if (this.resumeTimer !== null) {
+      clearInterval(this.resumeTimer);
+      this.resumeTimer = null;
+    }
   }
 
   stopPruneWatch(): void {
@@ -479,7 +561,7 @@ export class RelayerEngine {
 
   private prune(now: number = Date.now()): void {
     for (const [jobId, bidList] of this.bids) {
-      const fresh = bidList.filter((bid) => now - bid.addedAt < BID_EXPIRY_MS);
+      const fresh = bidList.filter((bid) => now - bid.addedAt < this.bidExpiryMs);
       if (fresh.length === 0) {
         this.bids.delete(jobId);
       } else if (fresh.length !== bidList.length) {

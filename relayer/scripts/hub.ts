@@ -23,3 +23,10 @@ const server: ReturnType<typeof createServer> = createRelayerHttpServer(hub);
 server.listen(port, () => {
   console.log(`Opaque relayer hub listening on ${endpoint}`);
 });
+
+const shutdown = () => {
+  hub.stop();
+  server.close(() => process.exit(0));
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

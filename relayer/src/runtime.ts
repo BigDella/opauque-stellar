@@ -50,6 +50,8 @@ export interface RelayerNodeOptions {
   /** 0 disables the heartbeat timer (one heartbeat is still published). */
   heartbeatIntervalMs?: number;
   deadlineMarginLedgers?: number;
+  /** Maximum contract job lifetime, used to bound relayer memory retention. */
+  maxJobLifetimeLedgers?: number;
   log?: Logger;
 }
 
@@ -101,6 +103,7 @@ export async function startRelayerNode(opts: RelayerNodeOptions): Promise<Relaye
     deadlineMarginLedgers: opts.deadlineMarginLedgers,
     acceptedJobs,
     submitRetry: opts.submitRetry,
+    maxJobLifetimeLedgers: opts.maxJobLifetimeLedgers,
     // The hub scores completion rate from outcomes it receives over gossip, so
     // a settled job has to be reported or the operator stays unscored forever.
     onSettled: async (jobId, result) => {
@@ -153,6 +156,8 @@ export async function startRelayerNode(opts: RelayerNodeOptions): Promise<Relaye
     });
   }
   reconciler.start();
+  engine.startPruneWatch();
+  engine.startAcceptedJobWatch();
 
   await attachRelayerEngineToGossip(engine, opts.transport);
 
@@ -184,6 +189,7 @@ export async function startRelayerNode(opts: RelayerNodeOptions): Promise<Relaye
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       reconciler.stop();
       engine.stopPruneWatch();
+      engine.stopAcceptedJobWatch();
     },
   };
 }

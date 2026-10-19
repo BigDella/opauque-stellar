@@ -1,6 +1,7 @@
 import type { RelayerEngine } from "./engine.ts";
 import type { GossipTransport } from "./gossip.ts";
 import type { HubStore } from "./store.ts";
+import { createLogger } from "./logger.ts";
 import {
   validateAdvert,
   validateBid,
@@ -15,6 +16,9 @@ import {
   type RelayerMessage,
   type RelayerOutcome,
 } from "./messages.ts";
+
+const log = createLogger("relayer-hub");
+export type { RelayerMessage } from "./messages.ts";
 
 export type RelayerHubStats = {
   advertsSeen: number;
@@ -41,11 +45,12 @@ export const NEUTRAL_RELAYER_SCORE = 0.5;
 /** How far back completed/failed jobs count toward a relayer's score. */
 const SCORE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Expiry time for old bids (90 days). */
-const BID_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000;
+/** Maximum registry job lifetime (~24 hours at 5 seconds per ledger). */
+const MAX_JOB_LIFETIME_MS = 17_280 * 5_000;
+const BID_EXPIRY_MS = MAX_JOB_LIFETIME_MS + 60 * 60 * 1000;
 
-/** Expiry time for old assignments (7 days). */
-const ASSIGNMENT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+/** Assignments cannot outlive the longest registry job plus recovery grace. */
+const ASSIGNMENT_EXPIRY_MS = BID_EXPIRY_MS;
 
 type OutcomeEntry = { result: "completed" | "failed"; at: number };
 type BidEntry = RelayerBid & { addedAt: number };
@@ -125,6 +130,13 @@ export class RelayerHub {
         this.stats.lastError = err instanceof Error ? err.message : String(err);
       }
     });
+    this.startFailoverWatch();
+    this.startPruneWatch();
+  }
+
+  stop(): void {
+    this.stopFailoverWatch();
+    this.stopPruneWatch();
   }
 
   bidsFor(jobId: string): RelayerBid[] {
@@ -329,43 +341,35 @@ export class RelayerHub {
 
   private async persistState(): Promise<void> {
     if (!this.store) return;
-    try {
-      const bidsForStore = Array.from(this.bids.entries()).map(([k, v]) => [k, v.map(b => ({ ...b }))]);
-      const assignmentsForStore = Array.from(this.assignments.entries()).map(([k, v]) => [k, v]);
-      await this.store.save({
-        bids: bidsForStore,
-        outcomes: Array.from(this.outcomes.entries()),
-        knownOperators: Array.from(this.knownOperators),
-        lastHeartbeatAt: Array.from(this.lastHeartbeatAt.entries()),
-        assignments: assignmentsForStore,
-        stats: { ...this.stats },
-      });
-    } catch (err) {
-      this.stats.lastError = err instanceof Error ? err.message : String(err);
-    }
+    const bidsForStore = Array.from(this.bids.entries()).map(([k, v]) => [k, v.map(b => ({ ...b }))] as const);
+    const assignmentsForStore = Array.from(this.assignments.entries()).map(([k, v]) => [k, v.operator] as const);
+    await this.store.save({
+      bids: bidsForStore,
+      outcomes: Array.from(this.outcomes.entries()),
+      knownOperators: Array.from(this.knownOperators),
+      lastHeartbeatAt: Array.from(this.lastHeartbeatAt.entries()),
+      assignments: assignmentsForStore,
+      stats: { ...this.stats },
+    });
   }
 
   private async hydrateFromStore(): Promise<void> {
     if (!this.store) return;
-    try {
-      const saved = await this.store.load();
-      if (!saved) return;
-      for (const [k, v] of saved.bids) this.bids.set(k, v);
-      for (const [k, v] of saved.outcomes) this.outcomes.set(k, v);
-      for (const op of saved.knownOperators) this.knownOperators.add(op);
-      for (const [k, v] of saved.lastHeartbeatAt) this.lastHeartbeatAt.set(k, v);
-      for (const [k, v] of saved.assignments) {
-        this.assignments.set(k, typeof v === "string" ? { operator: v, addedAt: Date.now() } : v);
-      }
-      if (saved.stats) {
-        this.stats.advertsSeen = saved.stats.advertsSeen;
-        this.stats.bidsSeen = saved.stats.bidsSeen;
-        this.stats.payloadsSeen = saved.stats.payloadsSeen;
-        this.stats.outcomesSeen = saved.stats.outcomesSeen;
-        this.stats.heartbeatsSeen = saved.stats.heartbeatsSeen;
-      }
-    } catch (err) {
-      this.stats.lastError = err instanceof Error ? err.message : String(err);
+    const saved = await this.store.load();
+    if (!saved) return;
+    for (const [k, v] of saved.bids) this.bids.set(k, v.map((bid) => ({ ...bid, addedAt: (bid as BidEntry).addedAt ?? Date.now() })));
+    for (const [k, v] of saved.outcomes) this.outcomes.set(k, v);
+    for (const op of saved.knownOperators) this.knownOperators.add(op);
+    for (const [k, v] of saved.lastHeartbeatAt) this.lastHeartbeatAt.set(k, v);
+    for (const [k, v] of saved.assignments) {
+      this.assignments.set(k, typeof v === "string" ? { operator: v, addedAt: Date.now() } : v);
+    }
+    if (saved.stats) {
+      this.stats.advertsSeen = saved.stats.advertsSeen;
+      this.stats.bidsSeen = saved.stats.bidsSeen;
+      this.stats.payloadsSeen = saved.stats.payloadsSeen;
+      this.stats.outcomesSeen = saved.stats.outcomesSeen;
+      this.stats.heartbeatsSeen = saved.stats.heartbeatsSeen;
     }
   }
 }
