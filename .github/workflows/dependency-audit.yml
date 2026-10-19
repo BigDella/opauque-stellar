@@ -19,9 +19,6 @@ on:
     - cron: "0 7 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   cargo-audit:
     name: cargo audit / cargo deny (workspace)
@@ -29,11 +26,13 @@ jobs:
     # pass from the `supply-chain` job in ci.yml, so it runs once per event.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     continue-on-error: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install audit tooling (pinned, prebuilt)
         uses: ./.github/actions/install-audit-tools
@@ -51,11 +50,13 @@ jobs:
     # workspace (#486). `cargo audit` exits non-zero when advisories are found,
     # which fails the check and blocks the PR until triaged within SLA.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     continue-on-error: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install cargo-audit (pinned, prebuilt)
         uses: ./.github/actions/install-audit-tools
@@ -99,14 +100,16 @@ jobs:
     name: npm supply-chain audit
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     continue-on-error: false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 

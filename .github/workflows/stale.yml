@@ -10,17 +10,16 @@ on:
     - cron: "0 8 * * *"
   workflow_dispatch:
 
-permissions:
-  issues: write
-  pull-requests: write
-
 jobs:
   stale:
     name: Mark and close stale issues/PRs
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     timeout-minutes: 10
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 

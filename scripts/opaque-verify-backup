@@ -5,9 +5,8 @@
 # For each service, decrypts the newest backup, fully extracts it into a temp
 # directory, and requires the result to be non-empty. Exits 1 on any failure.
 #
-# Environment: OPAQUE_BACKUP_DIR, OPAQUE_BACKUP_PASSPHRASE_FILE (as opaque-backup).
-# The relayer is verified only when RELAYER_DATA_DIR is set (the relayer node
-# persists nothing; only the hub, when configured, writes state).
+# Environment: OPAQUE_BACKUP_DIR, OPAQUE_BACKUP_PASSPHRASE_FILE (as opaque-backup),
+# OPAQUE_BACKUP_MAX_AGE_DAYS (default: 1).
 set -euo pipefail
 umask 077
 
@@ -16,10 +15,12 @@ PASSPHRASE_FILE="${OPAQUE_BACKUP_PASSPHRASE_FILE:-/etc/opaque/backup-passphrase}
 RESTORE_TMP=$(mktemp -d)
 trap 'rm -rf "$RESTORE_TMP"' EXIT
 
-services=(asp publisher)
-if [[ -n "${RELAYER_DATA_DIR:-}" ]]; then
-  services+=(relayer)
+MAX_AGE_DAYS="${OPAQUE_BACKUP_MAX_AGE_DAYS:-1}"
+if ! [[ "$MAX_AGE_DAYS" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: OPAQUE_BACKUP_MAX_AGE_DAYS must be a non-negative integer" >&2
+  exit 2
 fi
+services=(asp publisher relayer)
 
 FAILURES=0
 for service in "${services[@]}"; do
@@ -27,6 +28,14 @@ for service in "${services[@]}"; do
   latest=$(ls "$BACKUP_ROOT/${service}"-*.tar.gz.gpg 2>/dev/null | sort | tail -1 || true)
   if [[ -z "$latest" ]]; then
     echo "FAIL: no backup found for $service"
+    FAILURES=$((FAILURES + 1))
+    continue
+  fi
+
+  # `find -mmin` is intentionally used instead of parsing timestamps: it also
+  # detects archives copied into the backup directory with stale metadata.
+  if find "$latest" -mmin "+$((MAX_AGE_DAYS * 24 * 60))" -print -quit | grep -q .; then
+    echo "FAIL: $service - newest backup is older than ${MAX_AGE_DAYS} day(s): $(basename "$latest")"
     FAILURES=$((FAILURES + 1))
     continue
   fi
