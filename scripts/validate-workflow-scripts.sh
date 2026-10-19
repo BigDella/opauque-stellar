@@ -24,10 +24,30 @@ const workflowFiles = fs.readdirSync(workflowDir)
 
 let errors = 0;
 
+function validateActionPins(lines, relFile) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*#/.test(line)) continue;
+    const match = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/);
+    if (!match || match[1].startsWith("./")) continue;
+    const [, reference] = match[1].split("@");
+    if (!reference || !/^[a-f0-9]{40}$/i.test(reference)) {
+      console.error(`ERROR: ${relFile}:${index + 1} uses an action that is not pinned to a full commit SHA: ${match[1]}`);
+      errors++;
+      continue;
+    }
+    if (!/#\s+(?:v?\d|master|stable)\b/.test(line)) {
+      console.error(`ERROR: ${relFile}:${index + 1} action pin is missing its version comment: ${match[1]}`);
+      errors++;
+    }
+  }
+}
+
 for (const file of workflowFiles) {
   const content = fs.readFileSync(file, "utf8");
   const relFile = path.relative(repoRoot, file);
   const lines = content.split("\n");
+  validateActionPins(lines, relFile);
 
   // Parse steps: group consecutive lines that belong to the same step.
   // A step starts with a line matching /^\s+- (name|run|uses):/.

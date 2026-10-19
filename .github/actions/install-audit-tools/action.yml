@@ -17,12 +17,12 @@ runs:
   steps:
     - name: Install cargo-audit 0.22.2 (prebuilt)
       if: inputs.audit == 'true'
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
       with:
         tool: cargo-audit@0.22.2
 
     - name: Install cargo-deny 0.20.2 (prebuilt)
       if: inputs.deny == 'true'
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
       with:
         tool: cargo-deny@0.20.2

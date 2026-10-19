@@ -13,8 +13,7 @@
 #   ASP_DATA_DIR, PUBLISHER_DATA_DIR
 #                                  override service data dirs (the same variables the
 #                                  services read; default <repo>/{asp,publisher}/data)
-#   RELAYER_DATA_DIR               relayer hub state dir. The hub only persists when
-#                                  this is set; if unset the relayer is skipped.
+#   RELAYER_DATA_DIR               relayer state dir (default <repo>/.opaque-relayer)
 set -euo pipefail
 umask 077
 
@@ -80,15 +79,28 @@ backup_service() {
 }
 
 status=0
-backup_service asp       "${ASP_DATA_DIR:-$REPO_ROOT/asp/data}"             || status=1
-backup_service publisher "${PUBLISHER_DATA_DIR:-$REPO_ROOT/publisher/data}" || status=1
-backup_service relayer   "${RELAYER_DATA_DIR:-}"                            || status=1
+declare -A backup_succeeded
+for service in asp publisher relayer; do
+  case "$service" in
+    asp) src="${ASP_DATA_DIR:-$REPO_ROOT/asp/data}" ;;
+    publisher) src="${PUBLISHER_DATA_DIR:-$REPO_ROOT/publisher/data}" ;;
+    relayer) src="${RELAYER_DATA_DIR:-$REPO_ROOT/.opaque-relayer}" ;;
+  esac
+  if backup_service "$service" "$src"; then
+    backup_succeeded["$service"]=1
+  else
+    backup_succeeded["$service"]=0
+    status=1
+  fi
+done
 
 # Prune per service so a short-retention service never deletes another's history.
 for name in asp publisher relayer; do
   days=$(retention_for "$name")
   if [[ $DRY_RUN -eq 1 ]]; then
     echo "DRY-RUN: would prune $name backups older than ${days} days"
+  elif [[ "${backup_succeeded[$name]}" != 1 ]]; then
+    echo "SKIP: not pruning $name backups because its latest backup failed" >&2
   elif [[ -d "$BACKUP_ROOT" ]]; then
     find "$BACKUP_ROOT" -maxdepth 1 -name "${name}-*.tar.gz.gpg" -mtime "+${days}" -delete
     echo "Pruned $name backups older than ${days} days"

@@ -10,7 +10,7 @@ restore verification, and retention policy for each service.
 |:--|:--|:--|
 | ASP | `asp/data/` | Approved-set membership decisions and incremental event cursor |
 | Publisher | `publisher/data/` | Holder-submitted leaf commitments (private, never on-chain) |
-| Relayer hub (optional) | the directory set by `RELAYER_DATA_DIR` (contains `hub.json`); no default | Gossip-hub bids, outcomes, and operator stats. Only the hub persists, and only when `RELAYER_DATA_DIR` is set; a relayer node persists nothing, so there is nothing to back up when the variable is unset |
+| Relayer node | `.opaque-relayer/` by default, or `RELAYER_DATA_DIR` (contains `ledger.json` and `accepted-jobs.json`) | Reconciliation cursor and accepted-job history are required to resume safely after a restart. A hub may also store `hub.json` there when configured. |
 
 The publisher's inbox is the most critical: leaf commitments are submitted off-chain by
 holders and cannot be reconstructed from public events. Losing them means affected
@@ -28,8 +28,8 @@ sudo install -m 0755 scripts/opaque-verify-backup /usr/local/bin/opaque-verify-b
 
 Preview what it would do without writing anything with `opaque-backup --dry-run`.
 It reads `ASP_DATA_DIR` / `PUBLISHER_DATA_DIR` (the same variables the services use;
-defaults `<repo>/asp/data` and `<repo>/publisher/data`) and `RELAYER_DATA_DIR`,
-skips anything that is not configured or does not exist, applies the per-service
+defaults `<repo>/asp/data`, `<repo>/publisher/data`, and `<repo>/.opaque-relayer`) and
+`RELAYER_DATA_DIR`, applies the per-service
 retention from the table below (`OPAQUE_BACKUP_RETENTION_DAYS` overrides all), and
 writes each archive atomically.
 
@@ -115,8 +115,9 @@ sudo systemctl start opaque-publisher
 
 The verifier ships as [`scripts/opaque-verify-backup`](../scripts/opaque-verify-backup)
 (installed above). It decrypts the newest backup of each service, extracts it into a
-temp directory, requires it to be non-empty, and exits non-zero on any failure (the
-relayer is checked only when `RELAYER_DATA_DIR` is set). Schedule it weekly.
+temp directory, requires it to be non-empty, alerts and exits non-zero if the newest
+archive is older than one day (`OPAQUE_BACKUP_MAX_AGE_DAYS` overrides this), and exits
+non-zero on any failure. The relayer is always checked. Schedule it weekly.
 
 
 Schedule weekly:
@@ -135,6 +136,8 @@ Schedule weekly:
 
 The script applies these per-service defaults automatically. Set
 `OPAQUE_BACKUP_RETENTION_DAYS` to override the retention for all services at once.
+It prunes a service only after that service successfully produced its latest archive,
+so a run failure cannot erase its remaining recovery points.
 
 ## Off-site replication
 
