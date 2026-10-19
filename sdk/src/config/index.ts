@@ -41,6 +41,11 @@ export interface OpaqueConfig {
   contracts?: Partial<ContractAddresses>;
   /** Override relayer-market gateway endpoints. */
   relayerGatewayUrls?: string[];
+  /**
+   * Privacy-pool wiring (commitment scope + native XLM SAC id). Required on
+   * networks without a baked deployment; overrides the baked wiring otherwise.
+   */
+  pool?: Partial<PoolWiring>;
   /** Base URL of a reputation-root publisher service, if used. */
   reputationPublisherUrl?: string;
   /** Override the ledger event scans start from (defaults to deployment ledger). */
@@ -93,6 +98,25 @@ function mergeContracts(
   return merged as ContractAddresses;
 }
 
+function resolvePool(
+  network: OpaqueNetwork,
+  base: PoolWiring | undefined,
+  overrides: Partial<PoolWiring> | undefined,
+): PoolWiring {
+  const scope = overrides?.scope ?? base?.scope;
+  const nativeSac = overrides?.nativeSac ?? base?.nativeSac;
+  const missing: string[] = [];
+  if (scope === undefined) missing.push("pool.scope");
+  if (!nativeSac) missing.push("pool.nativeSac");
+  if (missing.length > 0) {
+    throw new ConfigError(
+      `Missing pool wiring for ${network}: ${missing.join(", ")}. ` +
+        `Pass them via config.pool (the native XLM SAC id is not the pool contract id).`,
+    );
+  }
+  return { scope: scope as number, nativeSac: nativeSac as string };
+}
+
 /**
  * Resolve user config into a complete, validated configuration: network preset +
  * baked deployment + explicit overrides. Throws {@link ConfigError} when a
@@ -129,7 +153,7 @@ export function resolveConfig(config: OpaqueConfig): ResolvedConfig {
     );
   }
 
-  const pool: PoolWiring = deployment?.pool ?? { scope: 1, nativeSac: contracts.privacyPool };
+  const pool = resolvePool(config.network, deployment?.pool, config.pool);
   const relayer: RelayerWiring = deployment?.relayer ?? {
     minimumStake: 0n,
     unstakeCooldownLedgers: 0,
