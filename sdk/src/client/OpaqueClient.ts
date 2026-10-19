@@ -76,6 +76,7 @@ export class OpaqueClient implements OpaqueClientContext {
 
   /** Cached contract-version check promise (at most one round trip per session). */
   private versionCheckPromise?: Promise<void>;
+  private disposed = false;
 
   constructor(opts: OpaqueClientOptions) {
     this.config = resolveConfig(opts);
@@ -239,5 +240,51 @@ export class OpaqueClient implements OpaqueClientContext {
    */
   async waitForReady(): Promise<void> {
     return this.versionCheckPromise ?? Promise.resolve();
+  }
+
+  /** Whether {@link dispose} has been called on this client. */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
+   * Release resources held for proving: terminates the worker threads `snarkjs`
+   * (via `ffjavascript`) keeps alive on the cached BN128 curve, so a Node
+   * script can end naturally without `process.exit`. Idempotent; safe to call
+   * when no proof was ever generated. Proving after disposal re-spawns workers.
+   *
+   * @example
+   * ```ts
+   * try {
+   *   await opaque.reputation.verifyOnChain(proof);
+   * } finally {
+   *   await opaque.dispose();
+   * }
+   * ```
+   */
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.versionCheckPromise?.catch(() => undefined);
+    await terminateSnarkjsCurves();
+  }
+}
+
+interface TerminableCurve {
+  terminate?: () => unknown;
+}
+
+/**
+ * ffjavascript caches each curve on `globalThis.curve_<name>` and keeps its
+ * worker threads alive until `terminate()` is called.
+ */
+async function terminateSnarkjsCurves(): Promise<void> {
+  const g = globalThis as Record<string, unknown>;
+  for (const key of ["curve_bn128", "curve_bls12381"]) {
+    const curve = g[key] as TerminableCurve | undefined;
+    if (curve && typeof curve.terminate === "function") {
+      await curve.terminate();
+      delete g[key];
+    }
   }
 }

@@ -137,8 +137,9 @@ class FakeAdapter implements ChainAdapter {
     this.stateRoot = root;
     this.statePosts.push({ root, datasetHash });
   }
+  latest = 100;
   async latestLedger() {
-    return 100;
+    return this.latest;
   }
 }
 
@@ -179,6 +180,40 @@ describe("engine reconcile", () => {
     expect(adapter.posts.length).toBe(2);
   });
 
+
+  it("holds deposits below the configured confirmation depth until they are final", async () => {
+    const adapter = new FakeAdapter();
+    const store = new MemoryStore();
+    // deposit(i) lands in ledger 10 + i.
+    adapter.deposits = [deposit(0), deposit(1), deposit(2)];
+    adapter.latest = 12;
+    const base = { poolId: "pool", scope: 1, adapter, store, policy: approveAll, confirmations: 2 };
+
+    // latest=12, depth 2 → ledgers <= 11 are final; ledger 12 (index 2) has 1 confirmation.
+    const r1 = await runPoolTick(base);
+    expect(r1.approvedCount).toBe(2);
+    expect(store.load("pool")?.approvedIndices).toEqual([0, 1]);
+    expect(store.load("pool")?.lastIndex).toBe(1);
+    expect(store.load("pool")?.lastLedger).toBe(11);
+
+    // Exactly at the boundary: latest=13 gives ledger 12 two confirmations.
+    adapter.latest = 13;
+    const r2 = await runPoolTick(base);
+    expect(r2.approvedCount).toBe(3);
+    expect(store.load("pool")?.approvedIndices).toEqual([0, 1, 2]);
+  });
+
+  it("processes deposits immediately when confirmations is 0 or 1", async () => {
+    for (const confirmations of [0, 1]) {
+      const adapter = new FakeAdapter();
+      adapter.deposits = [deposit(0), deposit(1)];
+      adapter.latest = 11;
+      const res = await runPoolTick({
+        poolId: "pool", scope: 1, adapter, store: new MemoryStore(), policy: approveAll, confirmations,
+      });
+      expect(res.approvedCount).toBe(2);
+    }
+  });
 
   it("excludes rejected deposits from the published set and records them for appeals", async () => {
     const adapter = new FakeAdapter();
