@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Headless end-to-end smoke test for the Opaque Stellar private-payment flow.
  *

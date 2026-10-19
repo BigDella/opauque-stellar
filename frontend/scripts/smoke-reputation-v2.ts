@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Headless end-to-end test for the V2 reputation flow: generate a Groth16 proof
  * for circuits/v2/stealth_reputation.circom and verify it ON-CHAIN via

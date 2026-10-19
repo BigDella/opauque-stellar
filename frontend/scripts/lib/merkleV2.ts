@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * TypeScript reimplementation of the scanner's Poseidon Merkle tree
  * (scanner/src/merkle.rs), used by the Phase 3 indexer/publisher and the

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate contracts/opaque-poseidon/src/constants.rs — the BN254 scalar-field
  * Montgomery constants and the circomlib Poseidon round constants (C) + MDS

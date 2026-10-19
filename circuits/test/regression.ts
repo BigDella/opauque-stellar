@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Circuit regression tests with deterministic fixtures.
  *

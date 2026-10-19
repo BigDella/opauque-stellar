@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Validates deployment manifests against the declared JSON Schema and
  * optionally checks env / WASM hashes.

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate the groth16-verifier embedded verification-key constants from a snarkjs
  * verification_key.json, and (optionally) rewrite them in place in the contract.

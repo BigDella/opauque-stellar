@@ -1,5 +1,10 @@
+
+
+import { readFileSync, existsSync } from "node:fs";
+
 /** Checks the TTL of every deployed contract's instance ledger entry via Soroban RPC. */
 import { existsSync, readFileSync } from "node:fs";
+
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Contract, rpc, xdr } from "@stellar/stellar-sdk";

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Validates mainnet security audit findings and signoff status.
  *

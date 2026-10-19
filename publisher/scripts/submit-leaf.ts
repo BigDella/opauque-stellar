@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Local development helper for inserting holder-submitted leaf commitments into
  * the publisher inbox.

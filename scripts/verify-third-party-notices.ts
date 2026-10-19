@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Verify THIRD_PARTY_NOTICES.md matches the current dependency trees and
  * that every non-permissive-licensed (or unrecognized-license) dependency

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generates the SDK error code mapping from Rust contract source files.
  *

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Phase 5 headless e2e smoke for the privacy pool, driven by a raw Keypair (no browser).
  *

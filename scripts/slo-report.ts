@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * SLO measurement + periodic report for the testnet ASP, relayer, and reputation
  * publisher. See docs/testnet-slos.md for the objective definitions, rationale, and

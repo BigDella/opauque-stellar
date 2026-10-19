@@ -1,4 +1,3 @@
-// @ts-nocheck
 /** Verify merkleV2.ts matches the Rust scanner's Poseidon/tree test vectors. */
 import { getPoseidon, hashFields, MerkleV2 } from "./lib/merkleV2.ts";
 

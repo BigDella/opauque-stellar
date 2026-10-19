@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Register or top up a relayer in the on-chain registry.
  *

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Phase 3 — Reputation attestation indexer + Merkle-root publisher.
  *

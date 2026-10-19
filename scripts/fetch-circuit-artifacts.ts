@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Download pinned circuit artifacts from GitHub release assets into frontend/public/circuits/.
  * Skips files that already match the manifest hash.

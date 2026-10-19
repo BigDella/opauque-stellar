@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Build scanner WASM via wasm-pack into frontend/public/pkg.
  */

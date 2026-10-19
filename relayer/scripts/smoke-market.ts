@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Live testnet smoke for the Phase 6 relayer-market control plane.
  *
